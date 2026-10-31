@@ -284,12 +284,7 @@
         toast('已登录：' + msg.user.displayName);
         break;
       case 'logged_out':
-        state.token = '';
-        state.username = '';
-        state.displayName = '';
-        store.removeItem('kd.token');
-        store.removeItem('kd.username');
-        store.removeItem('kd.displayName');
+        clearAuthIdentity(false);
         renderAuthBar();
         syncNickInput();
         break;
@@ -318,14 +313,7 @@
       case 'delete_account_result':
         if (msg.ok) {
           // 回到游客态：清空登录身份与昵称（本地仍保留大厅玩家身份 playerId/secret）
-          state.token = '';
-          state.username = '';
-          state.displayName = '';
-          state.name = '';
-          store.removeItem('kd.token');
-          store.removeItem('kd.username');
-          store.removeItem('kd.displayName');
-          store.removeItem('kd.name');
+          clearAuthIdentity(true);
           hideModal('account-modal');
           renderAuthBar();
           syncNickInput();
@@ -672,15 +660,11 @@
     const box = $('#header-btns');
     // 旁观者：仅显示「退出观战」+ 声音控制，无任何房间操作
     if (room.isViewer) {
-      let html = `<span class="viewer-badge">👁 观战中</span>`;
-      html += `<button class="btn small" id="btn-leave">退出观战</button>`;
-      html += `<button class="btn small${voiceEnabled ? ' voice-on' : ''}" id="btn-voice">${voiceEnabled ? '语音开' : '语音'}</button>`;
-      html += `<button class="btn small${sfxOn ? ' sfx-on' : ''}" id="btn-sfx">${sfxOn ? '音效开' : '音效'}</button>`;
-      box.innerHTML = html;
+      box.innerHTML = `<span class="viewer-badge">👁 观战中</span>
+        <button class="btn small" id="btn-leave">退出观战</button>${roomAudioBtnsHtml()}`;
       const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = fn; };
       on('btn-leave', () => send({ type: 'leave_room' }));
-      on('btn-voice', () => { if (voiceEnabled) voiceDisable(); else voiceEnable(); });
-      on('btn-sfx', () => setSfxOn(!sfxOn));
+      bindRoomAudioBtns();
       return;
     }
     let html = '';
@@ -694,9 +678,7 @@
     } else {
       html += `<button class="btn small" id="btn-leave">退出房间</button>`;
     }
-    html += `<button class="btn small${voiceEnabled ? ' voice-on' : ''}" id="btn-voice">${voiceEnabled ? '语音开' : '语音'}</button>`;
-    html += `<button class="btn small${sfxOn ? ' sfx-on' : ''}" id="btn-sfx">${sfxOn ? '音效开' : '音效'}</button>`;
-    box.innerHTML = html;
+    box.innerHTML = html + roomAudioBtnsHtml();
     const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = fn; };
     on('btn-add-ai', () => send({ type: 'add_ai' }));
     on('btn-start', () => send({ type: 'start_game' }));
@@ -704,12 +686,21 @@
       if (confirm('确定解散房间吗？所有玩家都会被移出。')) send({ type: 'dissolve' });
     });
     on('btn-leave', () => send({ type: 'leave_room' }));
-    on('btn-voice', () => {
-      if (voiceEnabled) voiceDisable();
-      else voiceEnable();
-    });
-    on('btn-sfx', () => setSfxOn(!sfxOn));
     on('btn-invite', () => openInvite());
+    bindRoomAudioBtns();
+  }
+
+  // 房间头部声音按钮（语音对讲 / 音效）：房主、普通玩家、旁观者三处共用
+  function roomAudioBtnsHtml() {
+    return `<button class="btn small${voiceEnabled ? ' voice-on' : ''}" id="btn-voice">${voiceEnabled ? '语音开' : '语音'}</button>` +
+      `<button class="btn small${sfxOn ? ' sfx-on' : ''}" id="btn-sfx">${sfxOn ? '音效开' : '音效'}</button>`;
+  }
+
+  function bindRoomAudioBtns() {
+    const voice = $('#btn-voice');
+    if (voice) voice.onclick = () => { if (voiceEnabled) voiceDisable(); else voiceEnable(); };
+    const sfx = $('#btn-sfx');
+    if (sfx) sfx.onclick = () => setSfxOn(!sfxOn);
   }
 
   function renderWaitingRoom() {
@@ -725,7 +716,7 @@
           <div class="nm">${esc(pl.name)}${pl.id === state.playerId ? '（我）' : ''}</div>
           <div>${pl.isAI ? '🤖 AI' : '真人'}${pl.id === room.ownerId ? ' · 房主' : ''}</div>`;
         if (isOwner && pl.id !== state.playerId) {
-          html += `<button class="btn small kick-btn" data-kick="${pl.id}" style="margin-top:6px;">踢出</button>`;
+          html += `<button class="btn small kick-btn" data-kick="${pl.id}">踢出</button>`;
         }
         html += '</div>';
       } else {
@@ -746,21 +737,25 @@
     }
   }
 
+  // 按积分降序的总排行行：房间内结算区与总结算弹窗共用（行间距由 .settle-final 上下文控制）
+  function settleRankRowsHtml(players) {
+    return [...players].filter(Boolean).sort((a, b) => b.score - a.score).map((p, i) => `
+      <div class="settle-player">
+        <span>${i + 1}.</span>
+        <span class="nm">${esc(p.name)}${p.id === state.playerId ? '（我）' : ''}</span>
+        <span class="delta ${p.score >= 0 ? 'up' : 'down'}">${p.score >= 0 ? '+' : ''}${p.score}</span>
+      </div>`).join('');
+  }
+
   function renderSettledRoom() {
     const room = state.room;
     const wrap = $('#table-wrap');
     const isOwner = room.ownerId === state.playerId;
     const full = room.players.filter(Boolean).length === 4;
-    const sorted = [...room.players].filter(Boolean).sort((a, b) => b.score - a.score);
     wrap.innerHTML = `
       <div class="settle-final">
-        <div class="wait-hint" style="font-size:18px;font-weight:700;">🏆 全部 ${room.settings.totalRounds} 局结束</div>
-        ${sorted.map((p, i) => `
-          <div class="settle-player" style="margin-bottom:8px;">
-            <span>${i + 1}.</span>
-            <span class="nm">${esc(p.name)}${p.id === state.playerId ? '（我）' : ''}</span>
-            <span class="delta ${p.score >= 0 ? 'up' : 'down'}">${p.score >= 0 ? '+' : ''}${p.score}</span>
-          </div>`).join('')}
+        <div class="wait-hint settle-final-title">🏆 全部 ${room.settings.totalRounds} 局结束</div>
+        ${settleRankRowsHtml(room.players)}
         <div class="wait-hint">本局已结束，可自由换人后再开新一轮：</div>
         <div class="settle-actions">${settleActionBtns(room, isOwner, full)}</div>
       </div>`;
@@ -827,7 +822,7 @@
       html += `<div class="seat seat-${pos}" data-seat="${seat}">`;
       // 旁观者：无自己的手牌，所有座位统一按明牌（对手）视角渲染
       const isViewer = state.room && state.room.isViewer;
-      html += (pos === 'bottom' && !isViewer) ? renderSelfCard(p, seat) : renderOtherCard(p, seat, pos);
+      html += (pos === 'bottom' && !isViewer) ? renderPlayerCard(p, seat, { self: true }) : renderPlayerCard(p, seat);
       html += '</div>';
     }
     html += '</div>';
@@ -911,10 +906,6 @@
     return { text: cur.ting ? `等待 ${cur.name} 摸打（报听）…` : `等待 ${cur.name} 出牌…`, mine: false };
   }
 
-  function turnText() {
-    return turnTextState().text;
-  }
-
   function hostedActionText(seat) {
     const game = state.game;
     if (!game || game.winners) return 'AI 已完成本局代打';
@@ -926,35 +917,42 @@
     return 'AI 正在等待其他玩家操作';
   }
 
-  function renderOtherCard(p, seat, pos) {
+  /**
+   * 玩家卡片公共骨架：座位状态标记（庄/AI/离线/托管/报听/锁金）+ 亮金区 + 明牌区 + 弃牌区。
+   * 自己与对手的差异只有：手牌区、托管按钮/托管状态、离线标记、昵称后缀，
+   * 均由 opts.self 决定，避免两份模板各自演化后出现显示不一致。
+   */
+  function renderPlayerCard(p, seat, opts = {}) {
     const game = state.game;
-    const hz = isHongZhongOf(game);
+    const self = !!opts.self;
     const isTurn = game.turn === seat && !game.winners;
     const goldTile = game.goldTile || null;
-    const meldHtml = renderMelds(p.melds, false, goldTile);
-    const discards = (p.discards || []).map((t) => tileHtml(t, 'tiny', 0, false, false, undefined, false, goldTile)).join('');
     const tj = game.goldTile != null;
     const shangjin = (tj && game.shangjinTiles && game.shangjinTiles[seat]) || null;
     const lockedBadge = tj && game.locked && game.locked[seat] ? '<span class="pc-lock">锁金</span>' : '';
+    const discards = (p.discards || []).map((t) => tileHtml(t, 'tiny', 0, false, false, undefined, false, goldTile)).join('');
     return `<div class="player-card ${isTurn ? 'active-turn' : ''}">
       <div class="pc-top">
         ${p.isDealer ? '<span class="pc-dealer">庄</span>' : ''}
         ${p.isAI ? '<span class="pc-ai">AI</span>' : ''}
-        ${!p.connected ? '<span class="pc-off">离线</span>' : ''}
-        ${p.hosted ? '<span class="pc-host">托管</span>' : ''}
+        ${!self && !p.connected ? '<span class="pc-off">离线</span>' : ''}
+        ${p.hosted ? `<span class="pc-host">${self ? 'AI托管中' : '托管'}</span>` : ''}
         ${p.ting ? '<span class="pc-ting">报听</span>' : ''}
-        ${p.handCount != null ? `<span class="pc-hand">手牌${p.handCount}</span>` : ''}
+        ${!self && p.handCount != null ? `<span class="pc-hand">手牌${p.handCount}</span>` : ''}
         ${lockedBadge}
-        <span class="pc-name">${esc(p.name)}</span>
+        <span class="pc-name">${esc(p.name)}${self ? '（我）' : ''}</span>
         <span class="pc-score">${p.score}</span>
+        ${self && !p.hosted ? '<button class="btn-hosted">托管</button>' : ''}
       </div>
+      ${self && p.hosted ? `<div class="hosted-status" aria-live="polite"><span>${hostedActionText(seat)}</span><button class="btn-cancel-hosted">取消托管</button></div>` : ''}
       ${shangjin ? `<div class="shangjin-area" title="亮金区（${shangjin.length}/3）">${shangjin.map((t) => tileHtml(t, 'tiny', 0, false, false, undefined, false, goldTile)).join('')}</div>` : ''}
-      <div class="melds">${meldHtml}</div>
+      <div class="melds">${renderMelds(p.melds, self, goldTile)}</div>
+      ${self ? `<div class="hand">${state.tingPick ? '<div class="ting-pick-hint">请选择要扣的牌报听（需听牌中含 ≥6 点牌，灰色不可选）</div>' : ''}<div class="hand-tiles${state.tingPick ? ' ting-pick' : ''}">${renderSelfHand(p)}</div></div>` : ''}
       <div class="discard-area">${discards}</div>
     </div>`;
   }
 
-  // 单张手牌 HTML：复用与 renderSelfCard 一致的听口/新摸牌/选中态判定，供全量重绘与选中重绘共用
+  // 单张手牌 HTML：听口/新摸牌/选中态判定，供全量重绘与选中重绘共用
   function selfTileHtml(p, t, i) {
     const game = state.game;
     // tingHints[t] 未定义 = 打出后听口不含 ≥6 点牌（不可报听）；为 0 = 绝听但可报听（仅角标显示剩余 0 张）
@@ -996,54 +994,17 @@
     return hand.map((t, i) => selfTileHtml(p, t, i)).join('');
   }
 
-  function renderSelfCard(p, seat) {
-    const game = state.game;
-    const isTurn = game.turn === seat && !game.winners;
-    const hz = isHongZhongOf(game);
-    const goldTile = game.goldTile || null;
-    const hand = renderSelfHand(p);
-    const meldHtml = renderMelds(p.melds, true, goldTile);
-    const discards = (p.discards || []).map((t) => tileHtml(t, 'tiny', 0, false, false, undefined, false, goldTile)).join('');
-    const tj = game.goldTile != null;
-    const shangjin = (tj && game.shangjinTiles && game.shangjinTiles[seat]) || null;
-    const lockedBadge = tj && game.locked && game.locked[seat] ? '<span class="pc-lock">锁金</span>' : '';
-    return `<div class="player-card ${isTurn ? 'active-turn' : ''}">
-      <div class="pc-top">
-        ${p.isDealer ? '<span class="pc-dealer">庄</span>' : ''}
-        ${p.isAI ? '<span class="pc-ai">AI</span>' : ''}
-        ${p.hosted ? '<span class="pc-host">AI托管中</span>' : ''}
-        ${p.ting ? '<span class="pc-ting">报听</span>' : ''}
-        ${lockedBadge}
-        <span class="pc-name">${esc(p.name)}（我）</span>
-        <span class="pc-score">${p.score}</span>
-        ${p.hosted ? '' : '<button class="btn-hosted">托管</button>'}
-      </div>
-      ${p.hosted ? `<div class="hosted-status" aria-live="polite"><span>${hostedActionText(seat)}</span><button class="btn-cancel-hosted">取消托管</button></div>` : ''}
-      ${shangjin ? `<div class="shangjin-area" title="亮金区（${shangjin.length}/3）">${shangjin.map((t) => tileHtml(t, 'tiny', 0, false, false, undefined, false, goldTile)).join('')}</div>` : ''}
-      <div class="melds">${meldHtml}</div>
-      <div class="hand">${state.tingPick ? '<div class="ting-pick-hint">请选择要扣的牌报听（需听牌中含 ≥6 点牌，灰色不可选）</div>' : ''}<div class="hand-tiles${state.tingPick ? ' ting-pick' : ''}">${hand}</div></div>
-      <div class="discard-area">${discards}</div>
-    </div>`;
-  }
+  const TILE_BACK = '<span class="tile tiny back"></span>';
 
+  // 明牌区：暗杠在自家人视角（isMine）与结算公开时亮 1 张真牌 + 3 张牌背（用于查杠），
+  // 他人视角一律 4 张牌背。结算公开复用 isMine=true，避免维护第二份模板。
   function renderMelds(melds, isMine = false, goldTile) {
     if (!melds || !melds.length) return '';
     return melds.map((m) => {
-      const tiles = m.type === 'angang' && isMine
-        ? tileHtml(m.tiles[0], 'tiny', 0, false, false, undefined, false, goldTile) + '<span class="tile tiny back"></span><span class="tile tiny back"></span><span class="tile tiny back"></span>'
-        : m.type === 'angang'
-          ? '<span class="tile tiny back"></span><span class="tile tiny back"></span><span class="tile tiny back"></span><span class="tile tiny back"></span>'
-          : m.tiles.map((t) => tileHtml(t, 'tiny', 0, false, false, undefined, false, goldTile)).join('');
-      return `<div class="meld">${tiles}</div>`;
-    }).join('');
-  }
-
-  // 结算公开展示明牌区：牌局已结束、手牌已亮；明杠/碰/补杠牌面全亮，暗杠亮一张真牌 + 三张牌背（与明杠区分、用于查杠）
-  function renderMeldsRevealed(melds, goldTile) {
-    if (!melds || !melds.length) return '';
-    return melds.map((m) => {
       const tiles = m.type === 'angang'
-        ? tileHtml(m.tiles[0], 'tiny', 0, false, false, undefined, false, goldTile) + '<span class="tile tiny back"></span><span class="tile tiny back"></span><span class="tile tiny back"></span>'
+        ? (isMine
+          ? tileHtml(m.tiles[0], 'tiny', 0, false, false, undefined, false, goldTile) + TILE_BACK + TILE_BACK + TILE_BACK
+          : TILE_BACK + TILE_BACK + TILE_BACK + TILE_BACK)
         : m.tiles.map((t) => tileHtml(t, 'tiny', 0, false, false, undefined, false, goldTile)).join('');
       return `<div class="meld">${tiles}</div>`;
     }).join('');
@@ -1446,6 +1407,20 @@
     if (logoutBtn) logoutBtn.classList.toggle('hidden', !loggedIn);
   }
 
+  // 清空登录身份（token / 用户名 / 昵称）。clearName=true 时一并清掉大厅昵称（注销账号回到游客态）。
+  function clearAuthIdentity(clearName) {
+    state.token = '';
+    state.username = '';
+    state.displayName = '';
+    store.removeItem('kd.token');
+    store.removeItem('kd.username');
+    store.removeItem('kd.displayName');
+    if (clearName) {
+      state.name = '';
+      store.removeItem('kd.name');
+    }
+  }
+
   function showAuthError(msg) {
     const tip = $('#auth-tip');
     if (!tip) return;
@@ -1663,7 +1638,7 @@
 
   // 被邀请方弹窗：选择是否进入房间
   function showInviteReceive(msg) {
-    const variantName = msg.variant === 'hongzhong' ? '红中麻将' : msg.variant === 'tiejin' ? '贴金麻将' : '扣点点';
+    const variantName = variantLabel({ variant: msg.variant });
     const typeName = msg.roomType === 'public' ? '公共局' : '好友局';
     $('#invite-recv-owner').textContent = msg.ownerName || '未知';
     $('#invite-recv-info').textContent = `${typeName} · ${variantName} · 房间 ${msg.roomId}`;
@@ -1951,20 +1926,37 @@
     </div>`;
   }
 
+  // 结算四家手牌：hu 局显示本局得分；胡牌者标 winnerLabel（单局「（胡）」/房间结算「（赢）」）
+  function settleHandsHtml(result, opts = {}) {
+    const winSeat = opts.winSeat != null ? opts.winSeat : result.winnerSeat;
+    const winnerLabel = opts.winnerLabel || '（胡）';
+    const withScore = result.type === 'hu';
+    const goldTile = opts.goldTile;
+    const rows = (result.hands || []).map((h) => h ? `
+        <div class="row">
+          <b>${esc(h.name)}${h.seat === winSeat ? winnerLabel : ''}</b>
+          ${h.hand.map((t) => tileHtml(t, 'tiny', 0, false, false, undefined, false, goldTile)).join('')}
+          ${h.melds && h.melds.length ? '<span>|</span>' + renderMelds(h.melds, true, goldTile) : ''}
+          ${withScore ? `<span class="settle-round-score">${h.roundScore >= 0 ? '+' : ''}${h.roundScore}</span>` : ''}
+        </div>` : '').join('');
+    return `<div class="settle-hands">${rows}</div>`;
+  }
+
+  function settleNameOf(result, seat) {
+    return result.hands && result.hands[seat] ? result.hands[seat].name : '座位' + seat;
+  }
+
+  function winLabelOf(winType) {
+    return winType === 'zimo' ? '自摸' : winType === 'qianggang' ? '抢杠胡' : '点炮胡';
+  }
+
   /** 红中麻将结算详情（variant==='hongzhong'）：番数倍数 + 扎码 + 支付明细 */
   function buildHZSettleHtml(result, opts = {}) {
     const prefix = opts.prefix || '';
     const winnerLabel = opts.winnerLabel || '（胡）';
     const compact = !!opts.compact;
-    const nameOf = (s) => (result.hands && result.hands[s] ? result.hands[s].name : '座位' + s);
-    const handsHtml = (withScore) => (result.hands || []).map((h) => h ? `
-        <div class="row">
-          <b>${esc(h.name)}${h.seat === result.winnerSeat ? winnerLabel : ''}</b>
-          ${h.hand.map((t) => tileHtml(t, 'tiny')).join('')}
-          ${h.melds && h.melds.length ? '<span>|</span>' + renderMeldsRevealed(h.melds) : ''}
-          ${withScore ? `<span style="opacity:.7">${h.roundScore >= 0 ? '+' : ''}${h.roundScore}</span>` : ''}
-        </div>` : '').join('');
-    const settleHands = `<div class="settle-hands">${handsHtml(result.type === 'hu')}</div>`;
+    const nameOf = (s) => settleNameOf(result, s);
+    const settleHands = settleHandsHtml(result, { winnerLabel });
     if (result.type === 'draw') {
       const flowLabel = state.room && state.room.settings && state.room.settings.dealerFlow === 'keep' ? '庄家连庄' : '下家接庄';
       if (compact) {
@@ -1976,7 +1968,7 @@
         ${settleHands}`;
     }
     const winner = result.hands && result.hands[result.winnerSeat];
-    const winLabel = result.winType === 'zimo' ? '自摸' : result.winType === 'qianggang' ? '抢杠胡' : '点炮胡';
+    const winLabel = winLabelOf(result.winType);
     const calcText = '无番制';
     // 扎码牌独立展示：红中 1/5/9 万筒条 及 红中 为中码
     const isZhongMaTile = (t) =>
@@ -2021,20 +2013,13 @@
     const winnerLabel = opts.winnerLabel || '（胡）';
     const compact = !!opts.compact;
     const winSeat = result.winner != null ? result.winner : result.winnerSeat;
-    const nameOf = (s) => (result.hands && result.hands[s] ? result.hands[s].name : '座位' + s);
-    const handsHtml = (withScore) => (result.hands || []).map((h) => h ? `
-        <div class="row">
-          <b>${esc(h.name)}${h.seat === winSeat ? winnerLabel : ''}</b>
-          ${h.hand.map((t) => tileHtml(t, 'tiny', 0, false, false, undefined, false, result.goldTile)).join('')}
-          ${h.melds && h.melds.length ? '<span>|</span>' + renderMeldsRevealed(h.melds, result.goldTile) : ''}
-          ${withScore ? `<span style="opacity:.7">${h.roundScore >= 0 ? '+' : ''}${h.roundScore}</span>` : ''}
-        </div>` : '').join('');
-    const settleHands = `<div class="settle-hands">${handsHtml(result.type === 'hu')}</div>`;
+    const nameOf = (s) => settleNameOf(result, s);
+    const settleHands = settleHandsHtml(result, { winSeat, winnerLabel, goldTile: result.goldTile });
     const goldBlock = result.goldMother && result.goldTile
       ? `<div class="settle-sub">金母 ${tileHtml(result.goldMother, 'tiny', 0, false, false, undefined, false, result.goldMother)} → 金牌 ${tileHtml(result.goldTile, 'tiny', 0, false, false, undefined, false, result.goldTile)}（${result.scoreMode === 'B' ? '125体系' : '边趣计分'}）</div>`
       : '';
     const shangjinBlock = (result.shangjinCount || []).map((c, s) =>
-      c > 0 ? `<span class="settle-sub" style="display:inline-block;margin-right:10px;">${esc(nameOf(s))} 亮金 ${c}</span>` : ''
+      c > 0 ? `<span class="settle-sub settle-shangjin">${esc(nameOf(s))} 亮金 ${c}</span>` : ''
     ).join('');
     const locked = (result.locked || []).some(Boolean);
     const lockBlock = locked
@@ -2045,7 +2030,7 @@
       ? `<div class="settle-sub">牌型：${esc(result.shapeNames.join('、'))}（加番 ×${result.shapeMult || 1}，仅放胡牌分，金分不翻）</div>`
       : '';
     const baoHuBlock = result.baoHu
-      ? `<div class="settle-sub" style="color:#c0392b;font-weight:600;">包胡：牌墙剩最后 4 张放炮，放炮者独赔三家</div>`
+      ? `<div class="settle-sub settle-baohu">包胡：牌墙剩最后 4 张放炮，放炮者独赔三家</div>`
       : '';
     const pays = result.payments || [];
     const payBlock = pays.length
@@ -2075,7 +2060,7 @@
         ${settleHands}`;
     }
     const winner = result.hands && result.hands[winSeat];
-    const winLabel = result.winType === 'zimo' ? '自摸' : result.winType === 'qianggang' ? '抢杠胡' : '点炮胡';
+    const winLabel = winLabelOf(result.winType);
     if (compact) {
       return `<div class="settle-head">
         <div class="settle-sub">${prefix}${winner ? winner.name : ''} ${winLabel} ${tileText(result.tile)} · 亮金 ${result.goldCount || 0} 张 · 金分 ${result.goldScore || 0}${result.shapeNames && result.shapeNames.length ? ' · ' + esc(result.shapeNames.join('、')) + '×' + (result.shapeMult || 1) : ''}${result.baoHu ? ' · 包胡' : ''} → ${result.winnerGain >= 0 ? '+' : ''}${result.winnerGain} 分</div>
@@ -2114,14 +2099,7 @@
     const winnerLabel = opts.winnerLabel || '（胡）';
     const compact = !!opts.compact;
     const isAdd = result.scoreModel === 'add';
-    const handsHtml = (withScore) => (result.hands || []).map((h) => h ? `
-        <div class="row">
-          <b>${esc(h.name)}${h.seat === result.winnerSeat ? winnerLabel : ''}</b>
-          ${h.hand.map((t) => tileHtml(t, 'tiny')).join('')}
-          ${h.melds && h.melds.length ? '<span>|</span>' + renderMeldsRevealed(h.melds) : ''}
-          ${withScore ? `<span style="opacity:.7">${h.roundScore >= 0 ? '+' : ''}${h.roundScore}</span>` : ''}
-        </div>` : '').join('');
-    const settleHands = `<div class="settle-hands">${handsHtml(result.type === 'hu')}</div>`;
+    const settleHands = settleHandsHtml(result, { winnerLabel });
     if (result.type === 'draw') {
       const ting = (result.tingSeats || []).map((s) => result.hands[s] ? result.hands[s].name : '').join('、');
       const flowLabel = state.room && state.room.settings && state.room.settings.dealerFlow === 'keep' ? '庄家连庄' : '下家接庄';
@@ -2135,7 +2113,7 @@
         ${settleHands}`;
     }
     const winner = result.hands && result.hands[result.winnerSeat];
-    const winLabel = result.winType === 'zimo' ? '自摸' : result.winType === 'qianggang' ? '抢杠胡' : '点炮胡';
+    const winLabel = winLabelOf(result.winType);
     const multText = isAdd
       ? ((result.addNames && result.addNames.length) ? result.addNames.join('、') : '平胡')
       : (result.multNames && result.multNames.length ? result.multNames.join('、') : '平胡');
@@ -2176,7 +2154,7 @@
     } else {
       const ws = result.winner != null ? result.winner : result.winnerSeat;
       const winner = result.hands && result.hands[ws];
-      const winLabel = result.winType === 'zimo' ? '自摸' : result.winType === 'qianggang' ? '抢杠胡' : '点炮胡';
+      const winLabel = winLabelOf(result.winType);
       title.textContent = `${winner ? winner.name : ''} ${winLabel}！`;
     }
     content.innerHTML = buildSettleHtml(result, { winnerLabel: '（胡）' });
@@ -2238,7 +2216,6 @@
     const room = state.room;
     const title = $('#settle-title');
     const content = $('#settle-content');
-    const sorted = [...room.players].filter(Boolean).sort((a, b) => b.score - a.score);
     title.textContent = '🏆 房间结算';
     let html = '';
     const w = state.game && state.game.winners;
@@ -2249,12 +2226,7 @@
         html += buildSettleHtml(w, { prefix: '最后一局：', compact: true });
       }
     }
-    html += sorted.map((p, i) => `
-      <div class="settle-player">
-        <span>${i + 1}.</span>
-        <span class="nm">${esc(p.name)}${p.id === state.playerId ? '（我）' : ''}</span>
-        <span class="delta ${p.score >= 0 ? 'up' : 'down'}">${p.score >= 0 ? '+' : ''}${p.score}</span>
-      </div>`).join('');
+    html += settleRankRowsHtml(room.players);
     content.innerHTML = html;
     $('#settle-modal').classList.remove('hidden');
   }
