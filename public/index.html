@@ -46,7 +46,7 @@
       <div class="lobby-bar">
         <button id="create-room-btn" class="btn primary">＋ 创建房间</button>
         <div class="join-box">
-          <input id="join-room-input" placeholder="房间号" maxlength="4" inputmode="numeric" autocomplete="off">
+          <input id="join-room-input" name="roomNo" placeholder="房间号" maxlength="4" inputmode="numeric" autocomplete="off">
           <button id="join-room-btn" class="btn">加入房间</button>
         </div>
       </div>
@@ -253,15 +253,19 @@
         <button class="seg-item active" data-value="login">登录</button>
         <button class="seg-item" data-value="register">注册</button>
       </div>
-      <div class="auth-form">
-        <input id="auth-username" maxlength="16" placeholder="用户名（2-16 位）" autocomplete="off">
-        <input id="auth-password" type="password" maxlength="32" placeholder="密码（至少 6 位）" autocomplete="off">
-        <input id="auth-name" maxlength="12" placeholder="昵称（注册时选填）" autocomplete="off" class="hidden">
-      </div>
+      <!-- 用真实 form 承载登录：浏览器才能把 username/password 识别为一组凭据并自动填充；
+           否则它会退化成“页面第一个可见文本框”，把大厅的房间号当成用户名 -->
+      <form id="auth-form" class="auth-form" autocomplete="on">
+        <input id="auth-username" name="username" maxlength="16" placeholder="用户名（2-16 位）"
+               autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <input id="auth-password" name="password" type="password" maxlength="32" placeholder="密码（至少 6 位）"
+               autocomplete="current-password">
+        <input id="auth-name" name="nickname" maxlength="12" placeholder="昵称（注册时选填）" autocomplete="off" class="hidden">
+      </form>
       <p class="tip" id="auth-tip"></p>
       <div class="modal-actions">
-        <button id="auth-cancel" class="btn">游客进入</button>
-        <button id="auth-submit" class="btn primary">登录</button>
+        <button type="button" id="auth-cancel" class="btn">游客进入</button>
+        <button type="submit" id="auth-submit" class="btn primary" form="auth-form">登录</button>
       </div>
     </div>
   </div>
@@ -362,6 +366,6 @@
     </div>
   </div>
 </div>
-<script src="app.js?v=36"></script>
+<script src="app.js?v=37"></script>
 </body>
 </html>

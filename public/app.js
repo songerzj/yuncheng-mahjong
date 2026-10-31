@@ -263,9 +263,11 @@
             store.removeItem('kd.token');
             renderAuthBar();
           }
+          pendingCredential = null;
           showAuthError(msg.message || '操作失败');
           break;
         }
+        pendingCredential = null;
         toast(msg.message || '操作失败', true);
         break;
       case 'registered':
@@ -281,6 +283,7 @@
         hideModal('auth-modal');
         renderAuthBar();
         syncNickInput();
+        savePendingCredential(msg.user.displayName);
         toast('已登录：' + msg.user.displayName);
         break;
       case 'logged_out':
@@ -1433,8 +1436,25 @@
     $('#auth-title').textContent = mode === 'register' ? '注册账号' : '登录';
     $('#auth-submit').textContent = mode === 'register' ? '注册并登录' : '登录';
     $('#auth-name').classList.toggle('hidden', mode !== 'register');
+    // 注册态用 new-password：避免浏览器把它当作“用旧密码登录”而去覆盖已保存的凭据
+    const password = $('#auth-password');
+    if (password) password.autocomplete = mode === 'register' ? 'new-password' : 'current-password';
     $('#auth-tip').textContent = '';
     $('#auth-tip').classList.remove('err');
+  }
+
+  // 登录成功后交给浏览器密码管理器保存：SPA 的表单提交被 preventDefault，浏览器不一定自己弹保存
+  let pendingCredential = null;
+
+  function savePendingCredential(displayName) {
+    const cred = pendingCredential;
+    pendingCredential = null;
+    if (!cred || !window.PasswordCredential || !navigator.credentials) return;
+    try {
+      navigator.credentials.store(new window.PasswordCredential({
+        id: cred.username, password: cred.password, name: displayName || cred.username,
+      })).catch(() => {});
+    } catch (e) { /* 浏览器不支持或非安全上下文时忽略 */ }
   }
 
   function submitAuth() {
@@ -1448,6 +1468,7 @@
       showAuthError('用户名需 2-16 位（字母/数字/下划线/中文）');
       return;
     }
+    pendingCredential = { username, password };
     if (mode === 'register') send({ type: 'register', username, password, name });
     else send({ type: 'login', username, password });
   }
@@ -2760,7 +2781,8 @@
     // 账号体系 UI 绑定
     $('#auth-btn').onclick = () => { setAuthMode('login'); showModal('auth-modal'); };
     $('#auth-cancel').onclick = () => hideModal('auth-modal');
-    $('#auth-submit').onclick = submitAuth;
+    // 走 form 的 submit：用户名/密码框内回车都能提交，也给浏览器一个明确的登录表单信号
+    $('#auth-form').addEventListener('submit', (e) => { e.preventDefault(); submitAuth(); });
     $('#history-btn').onclick = openHistory;
     $('#history-close').onclick = () => hideModal('history-modal');
     $('#leaderboard-btn').onclick = openLeaderboard;
@@ -2789,7 +2811,6 @@
     $('#account-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitNameChange(); });
     $('#account-new-password').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitPasswordChange(); });
     $$('#seg-auth .seg-item').forEach((b) => { b.onclick = () => setAuthMode(b.dataset.value); });
-    $('#auth-password').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
     renderAuthBar();
     $('#create-room-btn').onclick = () => { applyScoreModelPanel(); showModal('create-modal'); };
 
