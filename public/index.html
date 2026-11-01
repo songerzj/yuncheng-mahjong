@@ -46,7 +46,10 @@
       <div class="lobby-bar">
         <button id="create-room-btn" class="btn primary">＋ 创建房间</button>
         <div class="join-box">
-          <input id="join-room-input" name="roomNo" placeholder="房间号" maxlength="4" inputmode="numeric" autocomplete="off">
+          <!-- readonly 由 app.js 在首次交互时解锁：浏览器不会自动填充 readonly 字段，
+               防止已保存的账号被灌进房间号 -->
+          <input id="join-room-input" name="roomNo" placeholder="房间号" maxlength="4" inputmode="numeric"
+                 autocomplete="off" readonly>
           <button id="join-room-btn" class="btn">加入房间</button>
         </div>
       </div>
@@ -253,19 +256,26 @@
         <button class="seg-item active" data-value="login">登录</button>
         <button class="seg-item" data-value="register">注册</button>
       </div>
-      <!-- 用真实 form 承载登录：浏览器才能把 username/password 识别为一组凭据并自动填充；
-           否则它会退化成“页面第一个可见文本框”，把大厅的房间号当成用户名 -->
-      <form id="auth-form" class="auth-form" autocomplete="on">
-        <input id="auth-username" name="username" maxlength="16" placeholder="用户名（2-16 位）"
+      <!-- 登录/注册各用一个独立表单，autocomplete 语义静态写死，避免运行时改动后浏览器仍按旧标签填充：
+           登录 = username / current-password，可被密码管理器正确填充；
+           注册 = off / new-password，既不继承已保存账号，又能让浏览器提供“建议强密码” -->
+      <form id="login-form" class="auth-form" autocomplete="on">
+        <input id="login-username" name="username" maxlength="16" placeholder="用户名（2-16 位）"
                autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false">
-        <input id="auth-password" name="password" type="password" maxlength="32" placeholder="密码（至少 6 位）"
+        <input id="login-password" name="password" type="password" maxlength="32" placeholder="密码（至少 6 位）"
                autocomplete="current-password">
-        <input id="auth-name" name="nickname" maxlength="12" placeholder="昵称（注册时选填）" autocomplete="off" class="hidden">
+      </form>
+      <form id="register-form" class="auth-form hidden" autocomplete="off">
+        <input id="register-username" name="newUser" maxlength="16" placeholder="用户名（2-16 位）"
+               autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <input id="register-password" name="newPassword" type="password" maxlength="32" placeholder="密码（至少 6 位）"
+               autocomplete="new-password">
+        <input id="register-name" name="nickname" maxlength="12" placeholder="昵称（注册时选填）" autocomplete="off">
       </form>
       <p class="tip" id="auth-tip"></p>
       <div class="modal-actions">
         <button type="button" id="auth-cancel" class="btn">游客进入</button>
-        <button type="submit" id="auth-submit" class="btn primary" form="auth-form">登录</button>
+        <button type="submit" id="auth-submit" class="btn primary" form="login-form">登录</button>
       </div>
     </div>
   </div>
@@ -366,6 +376,6 @@
     </div>
   </div>
 </div>
-<script src="app.js?v=37"></script>
+<script src="app.js?v=38"></script>
 </body>
 </html>

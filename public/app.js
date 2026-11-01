@@ -1431,14 +1431,25 @@
     tip.classList.add('err');
   }
 
+  let authMode = 'login';
+
   function setAuthMode(mode) {
+    const register = mode === 'register';
+    const switched = authMode !== mode;
+    authMode = mode;
     $$('#seg-auth .seg-item').forEach((b) => b.classList.toggle('active', b.dataset.value === mode));
-    $('#auth-title').textContent = mode === 'register' ? '注册账号' : '登录';
-    $('#auth-submit').textContent = mode === 'register' ? '注册并登录' : '登录';
-    $('#auth-name').classList.toggle('hidden', mode !== 'register');
-    // 注册态用 new-password：避免浏览器把它当作“用旧密码登录”而去覆盖已保存的凭据
-    const password = $('#auth-password');
-    if (password) password.autocomplete = mode === 'register' ? 'new-password' : 'current-password';
+    $('#auth-title').textContent = register ? '注册账号' : '登录';
+    $('#auth-submit').textContent = register ? '注册并登录' : '登录';
+    // 提交按钮归属哪个表单：决定回车提交，也让浏览器明确这是登录表单还是注册表单
+    $('#auth-submit').setAttribute('form', register ? 'register-form' : 'login-form');
+    $('#login-form').classList.toggle('hidden', register);
+    $('#register-form').classList.toggle('hidden', !register);
+    if (register && switched) {
+      // 刚切到注册页：不复用登录页已填/被自动填充的账号
+      $('#register-username').value = '';
+      $('#register-password').value = '';
+      $('#register-name').value = '';
+    }
     $('#auth-tip').textContent = '';
     $('#auth-tip').classList.remove('err');
   }
@@ -1458,18 +1469,18 @@
   }
 
   function submitAuth() {
-    const mode = $('#seg-auth .seg-item.active').dataset.value;
-    const username = $('#auth-username').value.trim();
-    const password = $('#auth-password').value;
-    const name = $('#auth-name').value.trim();
+    const register = $('#seg-auth .seg-item.active').dataset.value === 'register';
+    const username = (register ? $('#register-username').value : $('#login-username').value).trim();
+    const password = register ? $('#register-password').value : $('#login-password').value;
+    const name = register ? $('#register-name').value.trim() : '';
     if (!username) { showAuthError('请输入用户名'); return; }
     if (!password || password.length < 6) { showAuthError('密码至少 6 位'); return; }
-    if (mode === 'register' && !/^[A-Za-z0-9_一-龥]{2,16}$/.test(username)) {
+    if (register && !/^[A-Za-z0-9_一-龥]{2,16}$/.test(username)) {
       showAuthError('用户名需 2-16 位（字母/数字/下划线/中文）');
       return;
     }
     pendingCredential = { username, password };
-    if (mode === 'register') send({ type: 'register', username, password, name });
+    if (register) send({ type: 'register', username, password, name });
     else send({ type: 'login', username, password });
   }
 
@@ -2772,6 +2783,18 @@
     };
     $('#nick-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#join-lobby-btn').click(); });
     $('#join-room-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#join-room-btn').click(); });
+    // 房间号初始 readonly（浏览器不会自动填充 readonly 字段），首次交互时解锁并清掉可能被灌入的值
+    const roomInput = $('#join-room-input');
+    if (roomInput) {
+      const unlockRoom = () => {
+        if (!roomInput.hasAttribute('readonly')) return;
+        roomInput.removeAttribute('readonly');
+        roomInput.value = '';
+      };
+      roomInput.addEventListener('pointerdown', unlockRoom);
+      roomInput.addEventListener('focus', unlockRoom);
+      roomInput.addEventListener('keydown', unlockRoom);
+    }
     $('#chat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendChat(); });
     $('#chat-send-btn').onclick = sendChat;
     renderQuickChat();
@@ -2781,8 +2804,10 @@
     // 账号体系 UI 绑定
     $('#auth-btn').onclick = () => { setAuthMode('login'); showModal('auth-modal'); };
     $('#auth-cancel').onclick = () => hideModal('auth-modal');
-    // 走 form 的 submit：用户名/密码框内回车都能提交，也给浏览器一个明确的登录表单信号
-    $('#auth-form').addEventListener('submit', (e) => { e.preventDefault(); submitAuth(); });
+    // 走 form 的 submit：用户名/密码框内回车都能提交，也给浏览器一个明确的登录/注册表单信号
+    ['#login-form', '#register-form'].forEach((sel) => {
+      $(sel).addEventListener('submit', (e) => { e.preventDefault(); submitAuth(); });
+    });
     $('#history-btn').onclick = openHistory;
     $('#history-close').onclick = () => hideModal('history-modal');
     $('#leaderboard-btn').onclick = openLeaderboard;
