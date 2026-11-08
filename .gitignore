@@ -9,6 +9,7 @@ certs/
 temp/
 logs/
 *.log
+reports/
 
 # 账号与历史对局记录（含密码哈希，禁止入库）
 data/

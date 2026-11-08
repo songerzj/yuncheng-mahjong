@@ -41,3 +41,19 @@ node scripts/ai-calibrate.js --reset     # 回滚到默认参数
 ```
 
 服务端自己也会在累计满 40 条困难档「AI 座位·局」记录后自动校准（可用 `MARVIS_AI_CALIBRATION_MIN_ROUNDS` 调整、`MARVIS_AI_CALIBRATION=0` 关闭）。CLI 主要用于人工复盘、重算与回滚；参数边界、样本门槛与设计约束见 `README.md` 的「AI 胜率复盘与自动校准」。
+
+## AI 批量模拟（纯内存，不需要启动服务）
+
+`ai-simulate.js` 直接驱动真实 `GameServer`，把 AI 代打的 80ms 定时器换成同步队列、广播与日志置空，用可复现种子批量打完整对局；`ai-simulate-analyze.js` 做配对 bootstrap 检验并生成 Markdown 报告。
+
+```bash
+npm run ai:sim -- --games 10000                          # 混合难度 2v2 同桌对抗（默认扣点点）
+npm run ai:sim -- --games 2000 --mode uniform            # 全普通 / 全困难镜像对照
+npm run ai:sim -- --games 10000 --calibration on         # 开启在线校准的长跑
+npm run ai:sim -- --games 1000 --variant hongzhong       # 换玩法
+npm run ai:sim:report -- reports/ai-mixed-10000.json --uniform reports/ai-uniform-2000.json --calib reports/ai-calib-10000.json
+```
+
+常用参数：`--workers`（并行进程数）、`--seed-base`（随机种子起点）、`--out`（结果 JSON 路径）。结果默认写到 `reports/`，该目录已 gitignore，不会把几 MB 的明细提交进仓库。
+
+实验设计：每个房间连打 4 局，同一 seed 跑两个房间并**对调难度分配**（`NHNH` ↔ `HNHN`），消除座位与庄家偏差；显著性用按 seed 聚类的 bootstrap，避免把同桌 4 家的相关性当作独立样本。模拟器还会统计困难内核的真实调用次数（全普通房间应为 0），用来验证难度注入确实生效。

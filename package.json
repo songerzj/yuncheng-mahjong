@@ -8,7 +8,9 @@
     "test": "node --test",
     "smoke": "node scripts/smoke-real.js",
     "ai:stats": "node scripts/ai-calibrate.js",
-    "ai:calibrate": "node scripts/ai-calibrate.js --apply"
+    "ai:calibrate": "node scripts/ai-calibrate.js --apply",
+    "ai:sim": "node scripts/ai-simulate.js",
+    "ai:sim:report": "node scripts/ai-simulate-analyze.js"
   },
   "dependencies": {
     "selfsigned": "^5.5.0",
