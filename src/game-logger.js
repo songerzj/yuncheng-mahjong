@@ -18,6 +18,7 @@
  *  - 默认启用（生产/本地运行均落盘）；NODE_ENV === 'test' 或 MARVIS_GAME_LOG === '0' 时静默禁用
  *  - 目录优先取 MARVIS_GAME_LOG_DIR 环境变量（便于测试隔离），否则为项目根 logs 目录
  *  - 切分阈值取 opts.maxFileSize 或 MARVIS_GAME_LOG_MAX_SIZE（字节），默认 20MB
+ *  - 文件名前缀取 opts.prefix（默认 'game-'）；AI 复盘日志用 'ai-' 复用同一套轮转/清理能力
  */
 
 const fs = require('fs');
@@ -94,12 +95,14 @@ function installExitHooks() {
  * @param {string} [opts.dir] 日志目录（默认：MARVIS_GAME_LOG_DIR 或项目 logs）
  * @param {boolean} [opts.enabled] 是否启用（默认按环境自动判断；显式传 false 可强制关闭）
  * @param {number} [opts.maxFileSize] 单文件切分阈值（字节，默认 20MB）
+ * @param {string} [opts.prefix] 日志文件名前缀（默认 'game-'）
  */
 function createGameLogger(opts = {}) {
   const dir =
     opts.dir ||
     process.env.MARVIS_GAME_LOG_DIR ||
     path.join(__dirname, '..', 'logs');
+  const prefix = opts.prefix || FILE_PREFIX;
   const enabled = opts.enabled !== undefined ? !!opts.enabled : isEnabled();
   const maxFileSize = normalizeMaxSize(
     opts.maxFileSize !== undefined ? opts.maxFileSize : process.env.MARVIS_GAME_LOG_MAX_SIZE
@@ -115,7 +118,7 @@ function createGameLogger(opts = {}) {
   function filePathFor(day, index = 0) {
     return path.join(
       dir,
-      index > 0 ? `${FILE_PREFIX}${day}.${index}.jsonl` : `${FILE_PREFIX}${day}.jsonl`
+      index > 0 ? `${prefix}${day}.${index}.jsonl` : `${prefix}${day}.jsonl`
     );
   }
 
@@ -243,12 +246,15 @@ function createGameLogger(opts = {}) {
     const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
     let removed = 0;
     let kept = 0;
+    // 只清理本日志器自己的前缀，避免误删同目录下的其他日志（如 ai-*.jsonl）
+    const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const nameRe = new RegExp('^' + escaped + '(\\d{4}-\\d{2}-\\d{2})(?:\\.(\\d+))?\\.jsonl$');
     try {
       if (!fs.existsSync(dir)) return { removed, kept };
       const files = fs.readdirSync(dir);
       for (const f of files) {
-        // 处理 game-YYYY-MM-DD.jsonl 及其分片 game-YYYY-MM-DD.N.jsonl
-        const m = /^game-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.jsonl$/.exec(f);
+        // 处理 PREFIX-YYYY-MM-DD.jsonl 及其分片 PREFIX-YYYY-MM-DD.N.jsonl
+        const m = nameRe.exec(f);
         if (!m) continue;
         const dayTs = new Date(m[1] + 'T00:00:00').getTime();
         if (Number.isNaN(dayTs)) continue;

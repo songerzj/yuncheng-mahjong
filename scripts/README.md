@@ -27,3 +27,17 @@ node scripts/smoke-history-e2e.js    # 打完一局后历史对局落盘
 | `smoke-history-e2e.js` | 登录用户打完一局后历史对局记录落盘并可查询 |
 
 > 注：端口写死为 `3100`，与 `server.js` 默认 `PORT` 一致。如需改端口，需同步修改脚本内 `URL`/`port` 常量。
+
+## AI 复盘 / 校准（不依赖运行中的服务）
+
+`ai-calibrate.js` 是唯一的非冒烟脚本：直接读取 `logs/ai-*.jsonl`（也兼容 `game-*.jsonl` 里的 AI 事件），不需要启动服务端。
+
+```bash
+npm run ai:stats                         # 只读：分玩法/难度的局数、胜率、放铳率、净得分
+npm run ai:calibrate                     # 按全量历史重算困难档参数并写入 data/ai-calibration.json
+node scripts/ai-calibrate.js --dry-run   # 预览判定与建议参数，不写文件
+node scripts/ai-calibrate.js --json --min-rounds 20 --log-dir ./logs
+node scripts/ai-calibrate.js --reset     # 回滚到默认参数
+```
+
+服务端自己也会在累计满 40 条困难档「AI 座位·局」记录后自动校准（可用 `MARVIS_AI_CALIBRATION_MIN_ROUNDS` 调整、`MARVIS_AI_CALIBRATION=0` 关闭）。CLI 主要用于人工复盘、重算与回滚；参数边界、样本门槛与设计约束见 `README.md` 的「AI 胜率复盘与自动校准」。

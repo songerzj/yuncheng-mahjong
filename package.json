@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
-    "smoke": "node scripts/smoke-real.js"
+    "smoke": "node scripts/smoke-real.js",
+    "ai:stats": "node scripts/ai-calibrate.js",
+    "ai:calibrate": "node scripts/ai-calibrate.js --apply"
   },
   "dependencies": {
     "selfsigned": "^5.5.0",

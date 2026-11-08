@@ -14,6 +14,7 @@
 const rules = require('./rules');
 const ai = require('./ai');
 const gameLogger = require('./game-logger');
+const aiJournal = require('./ai-journal');
 const users = require('./users');
 const crypto = require('crypto');
 
@@ -2193,6 +2194,12 @@ class GameServer {
       dealer: g ? g.dealer : null,
       variant: room.settings ? room.settings.variant : null,
     });
+    // AI 复盘：按 AI 座位汇总本局结果（胜/放铳/净得分），并驱动困难档胜率自动校准
+    try {
+      aiJournal.finishRound(room);
+    } catch (e) {
+      console.error('[ai-journal] finishRound failed:', e && e.message);
+    }
     // 保留房主离线超时定时器：本局结束时不能误清，否则房主超时后本局结束自动解散将失效
     const ownerOfflineTimer = room.timers.get('owner:offline');
     for (const [k, t] of room.timers) {
@@ -3451,7 +3458,7 @@ class GameServer {
   _chooseHongZhongDiscard(g, room, seat) {
     // 困难难度：先走「枚举弃牌 → 听口进张 → 风险 → 连接度」，无有效听口时回退下方原启发式
     if (ai.isHard(room)) {
-      const picked = ai.hardChooseHongZhongDiscard(g, seat);
+      const picked = ai.hardChooseHongZhongDiscard(g, seat, room);
       if (picked) return picked;
     }
     const cnt = rules.countTiles(g.hands[seat]);
@@ -3473,6 +3480,9 @@ class GameServer {
   }
 
   _decideHongZhongResponse(g, room, seat, r) {
+    // 困难难度：用「碰掉唯一对子会失去雀头」等牌效判据决定要不要碰，并落盘决策轨迹
+    const hardChoice = ai.decideVariantResponse(g, room, seat, r);
+    if (hardChoice) return hardChoice;
     if (r.canHu) return 'hu';
     if (r.canGang) return 'gang';
     if (r.canPeng) return 'peng';
@@ -3705,7 +3715,7 @@ class GameServer {
   _chooseTieJinDiscard(g, room, seat) {
     // 困难难度：贴金牌型专用听口枚举（金牌万能不参与弃牌），无有效听口时回退原启发式
     if (ai.isHard(room)) {
-      const picked = ai.hardChooseTieJinDiscard(g, seat);
+      const picked = ai.hardChooseTieJinDiscard(g, seat, room);
       if (picked) return picked;
     }
     const cnt = rules.countTiles(g.hands[seat]);
@@ -3725,6 +3735,8 @@ class GameServer {
   }
 
   _decideTieJinResponse(g, room, seat, r) {
+    const hardChoice = ai.decideVariantResponse(g, room, seat, r);
+    if (hardChoice) return hardChoice;
     if (r.canHu) return 'hu';
     if (r.canGang) return 'gang';
     if (r.canPeng) return 'peng';
