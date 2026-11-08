@@ -3,7 +3,9 @@
 /**
  * AI 决策模块（机器人 / 断线托管代打）
  *
- * 难度：room.settings.aiDifficulty = 'normal'（默认，原有启发式）| 'hard'（向听/进张枚举）。
+ * 难度按座位判定：room.players[seat].aiDifficulty 优先，
+ * 未指定时回落房间默认 room.settings.aiDifficulty（自动补位 / 托管 / 旧存档兼容）。
+ * 因此同一局里可以混搭普通与困难人机，判定统一走 ./ai-difficulty.js。
  * 普通模式行为完全保持原样；困难模式替换出牌选择与碰牌响应判断，
  * 胡/杠/报听流程两档共用。决策内核见 ./ai-hard.js 与 ./shanten.js。
  * 困难档每次决策的候选快照由 ./ai-journal.js 落盘，用于胜率复盘与自动校准。
@@ -12,11 +14,7 @@
 const rules = require('./rules');
 const hard = require('./ai-hard');
 const aiJournal = require('./ai-journal');
-
-/** 难度归一化：仅 'hard' 进入困难模式，其余（含旧房间数据）一律普通 */
-function isHard(room) {
-  return !!(room && room.settings && room.settings.aiDifficulty === 'hard');
-}
+const { isHard } = require('./ai-difficulty');
 
 /**
  * 回合摸牌后的决策
@@ -110,7 +108,7 @@ function decideDrawAction(game, room, seat) {
  * 响应阶段决策（难度分派）：困难档用碰后牌效对比，普通档保持原行为。
  */
 function decideResponse(game, room, seat, prompt) {
-  if (isHard(room)) {
+  if (isHard(room, seat)) {
     const { result, traces } = hard.captureTrace(() =>
       hard.decideResponse(game, room, seat, prompt)
     );
@@ -137,7 +135,7 @@ function decideResponseNormal(game, room, seat, prompt) {
  * 困难策略无法给出有效解时回退普通策略，保证 AI 任何局面都能出牌。
  */
 function chooseDiscard(hand, game, room, seat) {
-  if (isHard(room)) {
+  if (isHard(room, seat)) {
     const { result, traces } = hard.captureTrace(() => hard.chooseDiscard(hand, game, seat));
     for (const t of traces) aiJournal.recordDecision(room, seat, t);
     if (result) return result;
@@ -150,7 +148,7 @@ function chooseDiscard(hand, game, room, seat) {
  * 返回 null 表示普通档，由 GameServer 沿用其原有的「能碰就碰」策略。
  */
 function decideVariantResponse(game, room, seat, prompt) {
-  if (!isHard(room)) return null;
+  if (!isHard(room, seat)) return null;
   const { result, traces } = hard.captureTrace(() =>
     hard.decideResponse(game, room, seat, prompt)
   );

@@ -110,6 +110,10 @@ const ioMixin = {
         id: r.id,
         state: r.state,
         settings: r.settings,
+        // 逐座位人机难度（仅公开难度标签，不含任何身份字段）：房间列表可显示混合难度
+        aiDifficulties: r.players
+          .filter((pl) => pl && pl.isAI)
+          .map((pl) => (pl.aiDifficulty === 'hard' ? 'hard' : 'normal')),
         ownerName: r.ownerName, // 创建者名称（房主转让/离开后仍保持原创建者）
         playerCount: r.players.filter(Boolean).length,
       }));

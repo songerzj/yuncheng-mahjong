@@ -575,6 +575,72 @@
   }
 
   // ================= 大厅 =================
+  // ============ AI 难度（逐座位）展示 ============
+  // settings.aiDifficulty 只是默认值（自动补位 / 托管 / 旧客户端）；
+  // 实际难度以 players[seat].aiDifficulty 为准，同一局可混搭普通与困难人机。
+  function aiDifficultyLabel(room) {
+    const ds = (room.players || [])
+      .filter((p) => p && p.isAI)
+      .map((p) => (p.aiDifficulty === 'hard' ? 'hard' : 'normal'));
+    const fallback = room.settings && room.settings.aiFill
+      ? `AI补位·默认${room.settings.aiDifficulty === 'hard' ? '困难' : '普通'}`
+      : '无AI';
+    if (!ds.length) return fallback;
+    const h = ds.filter((x) => x === 'hard').length;
+    const n = ds.length - h;
+    if (h && n) return `AI ${h}困难·${n}普通`;
+    return `AI ${h ? '困难' : '普通'}×${ds.length}`;
+  }
+
+  function lobbyAiLabel(r) {
+    const ds = Array.isArray(r.aiDifficulties) ? r.aiDifficulties : [];
+    const fallback = r.settings && r.settings.aiFill
+      ? `AI补位·默认${r.settings.aiDifficulty === 'hard' ? '困难' : '普通'}`
+      : '无AI';
+    if (!ds.length) return fallback;
+    const h = ds.filter((x) => x === 'hard').length;
+    const n = ds.length - h;
+    if (h && n) return `AI ${h}困难·${n}普通`;
+    return `AI ${h ? '困难' : '普通'}×${ds.length}`;
+  }
+
+  /** 座位上的难度徽标；房主可点击直接切换（牌局进行中也生效） */
+  function aiBadge(pl, interactive, seat) {
+    if (!pl || !pl.isAI) return '';
+    const isHard = pl.aiDifficulty === 'hard';
+    const label = isHard ? '困难' : '普通';
+    if (!interactive) return `<span class="ai-diff-badge ${isHard ? 'hard' : ''}">${label}</span>`;
+    const next = isHard ? 'normal' : 'hard';
+    return `<button class="btn small ai-diff-toggle" data-diff-seat="${seat}" data-diff-next="${next}" title="点击切换为${isHard ? '普通' : '困难'} AI">AI·${label} ⇄</button>`;
+  }
+
+  /**
+   * 统一绑定：添加人机 / 切换难度（等待房、结算房、牌桌共用）。
+   * 必须委托到静态容器 #table-wrap 并监听 pointerdown —— 牌桌每 ~80ms 整桌 innerHTML 重建，
+   * 直接给按钮挂 onclick 会在按下到抬起之间被替换掉，桌面端收不到 click（与托管按钮同理）。
+   */
+  function bindAiSeatActions(wrap) {
+    if (!wrap || wrap.dataset.aiSeatBound === '1') return;
+    wrap.dataset.aiSeatBound = '1';
+    wrap.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const add = e.target.closest('.ai-add');
+      if (add) {
+        e.preventDefault();
+        const seat = add.dataset.addSeat === undefined ? null : Number(add.dataset.addSeat);
+        const msg = { type: 'add_ai', difficulty: add.dataset.addDiff };
+        if (seat !== null) msg.seat = seat; // 未指定座位时服务端自动找空位
+        send(msg);
+        return;
+      }
+      const toggle = e.target.closest('.ai-diff-toggle');
+      if (toggle) {
+        e.preventDefault();
+        send({ type: 'set_ai_difficulty', seat: Number(toggle.dataset.diffSeat), difficulty: toggle.dataset.diffNext });
+      }
+    });
+  }
+
   function renderLobby() {
     showView('lobby');
     applyVariantChrome('lobby'); // 大厅固定展示多玩法文案，不随玩法回退为扣点点
@@ -598,7 +664,7 @@
           <span>${r.playerCount}/4 人</span>
           <span>创建者 ${esc(r.ownerName || '未知')}</span>
           <span>${hz ? '112张·红中麻将' : tj ? '136张·贴金麻将' : '136张·带风带箭'}</span>
-          <span>${r.settings.aiFill ? (r.settings.aiDifficulty === 'hard' ? 'AI补位·困难' : 'AI补位·普通') : '无AI'}</span>
+          <span>${lobbyAiLabel(r)}</span>
           <span>${hz ? '癞子红中' : tj ? '金牌万能' : '报听必开'}</span>
           <span>${roundsText(r.settings.totalRounds)}</span>
         </div>
@@ -645,7 +711,7 @@
       (room.roundNo ? ` · 第 ${room.roundNo} 局` : '') +
       (room.settleConfirms && !room.settleConfirms.every(Boolean) ? ' · 等待确认' : '') +
       ` · ${roundsText(room.settings.totalRounds)}` +
-      (room.settings.aiFill ? ` · AI ${room.settings.aiDifficulty === 'hard' ? '困难' : '普通'}` : ' · 无AI');
+      ` · ${aiDifficultyLabel(room)}`;
     renderHeaderBtns();
     if (room.state === 'playing' && state.game) {
       renderTable();
@@ -673,7 +739,8 @@
     }
     let html = '';
     if (isOwner && (room.state === 'waiting' || room.state === 'settled')) {
-      if (!full) html += `<button class="btn small" id="btn-add-ai">＋ AI 补位</button>`;
+      if (!full) html += `<button class="btn small" id="btn-add-ai-normal">＋ 普通 AI</button>`;
+      if (!full) html += `<button class="btn small" id="btn-add-ai-hard">＋ 困难 AI</button>`;
       if (!full) html += `<button class="btn small" id="btn-invite">邀请</button>`;
       html += `<button class="btn small primary" id="btn-start">${room.state === 'settled' ? '再来一轮' : '开始游戏'}</button>`;
     }
@@ -684,7 +751,8 @@
     }
     box.innerHTML = html + roomAudioBtnsHtml();
     const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = fn; };
-    on('btn-add-ai', () => send({ type: 'add_ai' }));
+    on('btn-add-ai-normal', () => send({ type: 'add_ai', difficulty: 'normal' }));
+    on('btn-add-ai-hard', () => send({ type: 'add_ai', difficulty: 'hard' }));
     on('btn-start', () => send({ type: 'start_game' }));
     on('btn-dissolve', () => {
       if (confirm('确定解散房间吗？所有玩家都会被移出。')) send({ type: 'dissolve' });
@@ -718,19 +786,28 @@
       if (pl) {
         html += `<div class="wait-card">
           <div class="nm">${esc(pl.name)}${pl.id === state.playerId ? '（我）' : ''}</div>
-          <div>${pl.isAI ? '🤖 AI' : '真人'}${pl.id === room.ownerId ? ' · 房主' : ''}</div>`;
+          <div>${pl.isAI ? '🤖 AI' : '真人'}${pl.id === room.ownerId ? ' · 房主' : ''} ${aiBadge(pl, isOwner, s)}</div>`;
         if (isOwner && pl.id !== state.playerId) {
           html += `<button class="btn small kick-btn" data-kick="${pl.id}">踢出</button>`;
         }
         html += '</div>';
       } else {
-        html += `<div class="wait-card empty-card"><div class="nm">空位</div><div>等待加入…</div></div>`;
+        html += `<div class="wait-card empty-card"><div class="nm">空位 ${s + 1}</div><div>等待加入…</div>`;
+        if (isOwner) {
+          html += `<div class="seat-ai-btns">
+            <button class="btn small ai-add" data-add-seat="${s}" data-add-diff="normal">＋普通</button>
+            <button class="btn small ai-add" data-add-seat="${s}" data-add-diff="hard">＋困难</button>
+          </div>`;
+        }
+        html += '</div>';
       }
     }
     html += '</div>';
     html += `<div class="wait-hint">${
       isOwner
-        ? (full ? '人员已齐，点击「开始游戏」开局。' : '点击「开始游戏」开局；开启 AI 补位时不足 4 人将自动补位，也可点「＋ AI 补位」手动加入机器人。')
+        ? (full
+            ? '人员已齐，点击「开始游戏」开局；AI 座位上的难度按钮可随时切换。'
+            : '每个空位可分别加入普通或困难人机；开局时若开启 AI 补位，剩余空位按建房时的默认难度自动补齐。')
         : '等待房主开始游戏…'
     }</div>`;
     wrap.innerHTML = html;
@@ -738,6 +815,7 @@
       wrap.querySelectorAll('.kick-btn').forEach((b) => {
         b.onclick = () => send({ type: 'kick_player', targetId: b.dataset.kick });
       });
+      bindAiSeatActions(wrap);
     }
   }
 
@@ -770,10 +848,15 @@
   function settleActionBtns(room, isOwner, full) {
     const btns = [];
     if (isOwner) {
-      if (!full) btns.push(`<button class="btn small" id="btn-settle-add-ai">＋ AI 补位</button>`);
+      if (!full) btns.push(`<button class="btn small ai-add" data-add-diff="normal">＋普通 AI</button>`);
+      if (!full) btns.push(`<button class="btn small ai-add" data-add-diff="hard">＋困难 AI</button>`);
       for (const pl of room.players) {
         if (pl && pl.id !== state.playerId) {
           btns.push(`<button class="btn small kick-btn" data-kick="${pl.id}">踢出 ${esc(pl.name)}</button>`);
+        }
+        if (pl && pl.isAI) {
+          const next = pl.aiDifficulty === 'hard' ? 'normal' : 'hard';
+          btns.push(`<button class="btn small ai-diff-toggle" data-diff-seat="${pl.seat}" data-diff-next="${next}">${esc(pl.name)} · ${pl.aiDifficulty === 'hard' ? '困难' : '普通'} ⇄</button>`);
         }
       }
       btns.push(`<button class="btn small primary" id="btn-settle-restart">再来一轮</button>`);
@@ -785,11 +868,10 @@
   function bindSettleActions(room, isOwner) {
     const wrap = $('#table-wrap');
     if (!wrap) return;
-    const addAi = wrap.querySelector('#btn-settle-add-ai');
-    if (addAi) addAi.onclick = () => send({ type: 'add_ai' });
     wrap.querySelectorAll('.kick-btn').forEach((b) => {
       b.onclick = () => send({ type: 'kick_player', targetId: b.dataset.kick });
     });
+    if (isOwner) bindAiSeatActions(wrap);
     const restart = wrap.querySelector('#btn-settle-restart');
     if (restart) restart.onclick = () => send({ type: 'start_game' });
     const leave = wrap.querySelector('#btn-settle-leave');
@@ -836,6 +918,7 @@
     for (const l of layers) wrap.appendChild(l);
     bindTileClicks();
     bindCancelHosted();
+    bindAiSeatActions(wrap);
     applyWeakHighlight();
     renderActions();
     syncBubbleLayers();
@@ -939,6 +1022,7 @@
       <div class="pc-top">
         ${p.isDealer ? '<span class="pc-dealer">庄</span>' : ''}
         ${p.isAI ? '<span class="pc-ai">AI</span>' : ''}
+        ${aiBadge(p, !!(state.room && state.room.ownerId === state.playerId), seat)}
         ${!self && !p.connected ? '<span class="pc-off">离线</span>' : ''}
         ${p.hosted ? `<span class="pc-host">${self ? 'AI托管中' : '托管'}</span>` : ''}
         ${p.ting ? '<span class="pc-ting">报听</span>' : ''}

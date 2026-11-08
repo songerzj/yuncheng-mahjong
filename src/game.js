@@ -13,6 +13,7 @@
 
 const rules = require('./rules');
 const ai = require('./ai');
+const aiDifficulty = require('./ai-difficulty');
 const gameLogger = require('./game-logger');
 const aiJournal = require('./ai-journal');
 const users = require('./users');
@@ -306,7 +307,8 @@ class GameServer {
         case 'join_room': return this._joinRoom(p, msg);
         case 'leave_room': return this._leaveRoom(p);
         case 'start_game': return this._startGame(p);
-        case 'add_ai': return this._addAIByPlayer(p);
+        case 'add_ai': return this._addAIByPlayer(p, msg);
+        case 'set_ai_difficulty': return this._setAIDifficulty(p, msg);
         case 'kick_player': return this._kickPlayer(p, msg);
         case 'dissolve': return this._dissolve(p);
         case 'play_tile': return this._playTile(p, msg);
@@ -868,16 +870,55 @@ class GameServer {
     this._destroyRoom(room);
   }
 
-  _addAIByPlayer(p) {
+  /**
+   * 房主手动添加人机。可选参数：
+   *  - difficulty: 'normal' | 'hard'，缺省用房间默认难度（旧客户端不带参数，行为不变）
+   *  - seat: 0..3，指定入座位置；缺省自动找第一个空位
+   */
+  _addAIByPlayer(p, msg) {
     const room = p.roomId ? this.rooms.get(p.roomId) : null;
     if (!room) return this._err(p, '您不在房间中');
     if (p.id !== room.ownerId) return this._err(p, '只有房主可以添加 AI');
     if (room.state !== 'waiting' && room.state !== 'settled') return this._err(p, '当前状态不能添加 AI');
     if (room.players.filter(Boolean).length >= 4) return this._err(p, '房间已满');
-    this._addAI(room);
+    const raw = msg && msg.difficulty;
+    const difficulty = raw === undefined || raw === null
+      ? aiDifficulty.normalize(room.settings.aiDifficulty)
+      : aiDifficulty.parse(raw);
+    if (!difficulty) return this._err(p, 'AI 难度只能是 normal 或 hard');
+    const reqSeat = msg && msg.seat;
+    if (reqSeat !== undefined && reqSeat !== null) {
+      if (!Number.isInteger(reqSeat) || reqSeat < 0 || reqSeat > 3) return this._err(p, '座位编号不合法');
+      if (room.players[reqSeat]) return this._err(p, '该座位已有玩家');
+    }
+    if (!this._addAI(room, { difficulty, seat: reqSeat })) return this._err(p, '房间已满');
     this._broadcastRoomState(room);
     this._broadcastLobby();
     // 不再自动开局：人齐后由房主点击「开始游戏」触发
+  }
+
+  /**
+   * 房主调整某个人机座位的难度（牌局进行中也允许，下一次决策即生效）。
+   * 真人座位不可设置：其托管/断线代打沿用房间默认难度。
+   */
+  _setAIDifficulty(p, msg) {
+    const room = p.roomId ? this.rooms.get(p.roomId) : null;
+    if (!room) return this._err(p, '您不在房间中');
+    if (p.id !== room.ownerId) return this._err(p, '只有房主可以调整 AI 难度');
+    const difficulty = aiDifficulty.parse(msg && msg.difficulty);
+    if (!difficulty) return this._err(p, 'AI 难度只能是 normal 或 hard');
+    const reqSeat = msg && msg.seat;
+    const target = Number.isInteger(reqSeat) && reqSeat >= 0 && reqSeat <= 3
+      ? room.players[reqSeat]
+      : this._resolveRoomPlayer(room, String((msg && msg.targetId) || '').trim());
+    if (!target) return this._err(p, '目标座位无人');
+    if (!target.isAI) return this._err(p, '只能调整人机座位的难度');
+    if (target.aiDifficulty === difficulty) return;
+    target.aiDifficulty = difficulty;
+    this._log(room, `${target.name} 的 AI 难度已设为${difficulty === 'hard' ? '困难' : '普通'}`);
+    this._broadcastRoomState(room);
+    // 牌桌视图（game_state）里的座位徽标也要即时刷新，不等下一次行动
+    if (room.state === 'playing') this._broadcastGameState(room);
   }
 
   _kickPlayer(p, msg) {
@@ -944,14 +985,19 @@ class GameServer {
     this._dealRound(room);
   }
 
-  _addAI(room) {
-    const seat = room.players.findIndex((x) => x === null);
-    if (seat < 0) return null;
+  _addAI(room, opts = {}) {
+    const seat = Number.isInteger(opts.seat) && opts.seat >= 0 && opts.seat < 4 && !room.players[opts.seat]
+      ? opts.seat
+      : room.players.findIndex((x) => x === null);
+    if (seat < 0 || seat > 3) return null;
+    // 自动补位（开局 aiFill 补齐）与旧客户端不带参数时都用房间默认难度
+    const difficulty = aiDifficulty.parse(opts.difficulty) || aiDifficulty.normalize(room.settings.aiDifficulty);
     const seq = room.nextAiNo++;
     const p = {
       id: `ai_${room.id}_${seq}`,
       name: `机器人${seq}`,
       isAI: true,
+      aiDifficulty: difficulty,
       connected: true,
       hosted: false,
       ws: null,
@@ -964,7 +1010,7 @@ class GameServer {
     };
     room.players[seat] = p;
     this.players.set(p.id, p);
-    this._log(room, `${p.name} 加入房间（AI）`);
+    this._log(room, `${p.name} 加入房间（${difficulty === 'hard' ? '困难' : '普通'} AI）`);
     return p;
   }
 
@@ -2884,6 +2930,8 @@ class GameServer {
               id: this._idForViewer(pl, viewerSeat),
               name: pl.name,
               isAI: pl.isAI,
+              // 房间内可逐座位选择人机难度：下发归一化后的实际值（未指定者 = 房间默认）
+              aiDifficulty: aiDifficulty.difficultyOf(room, seat),
               connected: pl.connected,
               hosted: pl.hosted,
               score: pl.score,
@@ -2912,6 +2960,7 @@ class GameServer {
         seat: s,
         name: pl.name,
         isAI: pl.isAI,
+        aiDifficulty: aiDifficulty.difficultyOf(room, s),
         connected: pl.connected,
         hosted: pl.hosted,
         score: pl.score,
@@ -3195,8 +3244,8 @@ class GameServer {
     const variant = s.variant === 'hongzhong' ? 'hongzhong' : (s.variant === 'tiejin' ? 'tiejin' : 'koudian');
     // 房间类型：public=公共局（大厅列表可见，任何人可加入）；friend=好友局（大厅列表不可见，仅受邀进入）。默认 public 保持向后兼容
     const roomType = s.roomType === 'friend' ? 'friend' : 'public';
-    // AI 难度：normal=原有启发式（默认，旧客户端/旧房间数据兼容）；hard=向听/进张枚举 + 精确风险
-    const aiDifficulty = s.aiDifficulty === 'hard' ? 'hard' : 'normal';
+    // 默认 AI 难度：自动补位 / 真人托管 / 旧客户端沿用；房主可在房间内逐座位覆盖
+    const defaultAiDifficulty = s.aiDifficulty === 'hard' ? 'hard' : 'normal';
     // 红中麻将专属设置：扎码张数（0=不扎码 / 1/2/4/6）。
     // 固定胡牌方式：只能自摸/抢杠胡（禁点炮、抢杠仅限补杠）。
     if (variant === 'hongzhong') {
@@ -3207,7 +3256,7 @@ class GameServer {
         aiFill: !!s.aiFill,
         variant,
         roomType,
-        aiDifficulty,
+        aiDifficulty: defaultAiDifficulty,
         zhaMa,
         dealerFlow: 'keep', // 红中：流局庄家连庄（设计固定）
       };
@@ -3219,7 +3268,7 @@ class GameServer {
         aiFill: !!s.aiFill,
         variant,
         roomType,
-        aiDifficulty,
+        aiDifficulty: defaultAiDifficulty,
         drawEndMode: s.drawEndMode === 'B' ? 'B' : 'A', // 流局开关：默认 A（摸完）
         scoreMode: s.scoreMode === 'B' ? 'B' : 'A', // 计分开关：默认 A（边趣版）
         dealerFlow: 'flow', // 贴金：轮庄/流局坐庄（有杠下家、无杠连庄）
@@ -3234,7 +3283,7 @@ class GameServer {
       aiFill: !!s.aiFill,
       variant,
       roomType,
-      aiDifficulty,
+      aiDifficulty: defaultAiDifficulty,
       allowTing: true, // 报听为 136 必选核心规则
       enableQingYiSe: !!s.enableQingYiSe,
       enableYiTiaoLong: !!s.enableYiTiaoLong,
@@ -3457,7 +3506,7 @@ class GameServer {
 
   _chooseHongZhongDiscard(g, room, seat) {
     // 困难难度：先走「枚举弃牌 → 听口进张 → 风险 → 连接度」，无有效听口时回退下方原启发式
-    if (ai.isHard(room)) {
+    if (ai.isHard(room, seat)) {
       const picked = ai.hardChooseHongZhongDiscard(g, seat, room);
       if (picked) return picked;
     }
@@ -3714,7 +3763,7 @@ class GameServer {
 
   _chooseTieJinDiscard(g, room, seat) {
     // 困难难度：贴金牌型专用听口枚举（金牌万能不参与弃牌），无有效听口时回退原启发式
-    if (ai.isHard(room)) {
+    if (ai.isHard(room, seat)) {
       const picked = ai.hardChooseTieJinDiscard(g, seat, room);
       if (picked) return picked;
     }

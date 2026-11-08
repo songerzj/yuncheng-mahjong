@@ -537,6 +537,13 @@ body {
 .settle-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 12px; }
 .settle-actions .kick-btn { background: #f0e6e6; color: var(--red); border-color: #e0c4c4; }
 
+/* 逐座位 AI 难度：空座位加人机、座位徽标、房主点击切换 */
+.seat-ai-btns { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin-top: 8px; }
+.seat-ai-btns .btn.small { padding: 4px 9px; font-size: 12px; }
+.ai-diff-badge { display: inline-block; font-size: 11px; border-radius: 6px; padding: 1px 6px; background: rgba(255,255,255,.16); color: rgba(255,255,255,.8); }
+.ai-diff-badge.hard { background: rgba(255,120,80,.28); color: #ffbba4; }
+.wait-card .ai-diff-toggle, .pc-top .ai-diff-toggle, .settle-actions .ai-diff-toggle { padding: 2px 8px; font-size: 12px; }
+
 /* ---------- 弹窗 ---------- */
 .modal {
   position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 100;
@@ -551,6 +558,7 @@ body {
 .setting-row > label { font-weight: 600; min-width: 70px; }
 .setting-row.center { justify-content: center; }
 .setting-row > label.label-auto { min-width: auto; }
+.setting-note { margin: -6px 0 14px; font-size: 12px; line-height: 1.6; color: #777; }
 .seg { display: flex; gap: 6px; flex: 1; }
 .seg-item {
   flex: 1; padding: 8px 0; border: 1px solid #ccc; border-radius: 8px; background: #fff;

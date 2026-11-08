@@ -16,6 +16,7 @@
 
 const gameLogger = require('./game-logger');
 const calibration = require('./ai-calibration');
+const { difficultyOf } = require('./ai-difficulty');
 
 const AI_LOG_PREFIX = 'ai-';
 const MAX_DECISION_COUNTS = 5000;
@@ -50,10 +51,6 @@ function normalizeVariant(v) {
   return v === 'hongzhong' || v === 'tiejin' ? v : 'koudian';
 }
 
-function difficultyOf(room) {
-  return room && room.settings && room.settings.aiDifficulty === 'hard' ? 'hard' : 'normal';
-}
-
 function countKey(room, seat) {
   return `${room && room.id}|${room && room.roundNo}|${seat}`;
 }
@@ -65,7 +62,7 @@ function countKey(room, seat) {
  * @param {object} trace ai-hard 产出的决策轨迹
  */
 function recordDecision(room, seat, trace) {
-  if (!room || !trace || difficultyOf(room) !== 'hard') return false;
+  if (!room || !trace || difficultyOf(room, seat) !== 'hard') return false;
   const key = countKey(room, seat);
   if (decisionCounts.size >= MAX_DECISION_COUNTS) decisionCounts.clear();
   decisionCounts.set(key, (decisionCounts.get(key) || 0) + 1);
@@ -128,7 +125,6 @@ function finishRound(room) {
   if (!aiSeats.length) return null;
 
   const variant = normalizeVariant(room.settings && room.settings.variant);
-  const difficulty = difficultyOf(room);
   const winSeats = winnerSeatsOf(room);
   const discarder = discarderOf(room);
   const result = room.game.winners ? room.game.winners.type : 'aborted';
@@ -140,6 +136,7 @@ function finishRound(room) {
     const pl = players[seat];
     return {
       seat,
+      difficulty: difficultyOf(room, seat),
       win: winSeats.includes(seat),
       dealIn: discarder !== null && discarder === seat && !winSeats.includes(seat),
       net: Number(pl && pl.roundScore) || 0,
@@ -147,23 +144,38 @@ function finishRound(room) {
     };
   });
 
-  logger().append(room, 'ai_round_result', {
-    variant,
-    difficulty,
-    result,
-    winSeats,
-    discarder,
-    rows,
-  });
-
+  // 同一局可能混有普通/困难人机：按座位难度分条写盘，
+  // 离线统计（scripts/ai-calibrate.js）按 data.difficulty 聚合，混合房不能共用一条。
+  const groups = new Map();
+  for (const r of rows) {
+    if (!groups.has(r.difficulty)) groups.set(r.difficulty, []);
+    groups.get(r.difficulty).push(r);
+  }
   let lastCalibration = null;
-  if (difficulty === 'hard') {
-    for (const r of rows) {
-      const out = calibration.noteRound({ ...r, variant, difficulty });
-      if (out) lastCalibration = out;
+  for (const [difficulty, group] of groups) {
+    logger().append(room, 'ai_round_result', {
+      variant,
+      difficulty,
+      result,
+      winSeats,
+      discarder,
+      rows: group,
+    });
+    // 自动校准只吃困难档样本，普通档固定策略仅展示统计
+    if (difficulty === 'hard') {
+      for (const r of group) {
+        const out = calibration.noteRound({ ...r, variant, difficulty });
+        if (out) lastCalibration = out;
+      }
     }
   }
-  return { variant, difficulty, rows, calibration: lastCalibration };
+  const difficulties = [...groups.keys()];
+  return {
+    variant,
+    difficulty: difficulties.length === 1 ? difficulties[0] : 'mixed',
+    rows,
+    calibration: lastCalibration,
+  };
 }
 
 /** 异步冲刷（测试 / 脚本退出前） */

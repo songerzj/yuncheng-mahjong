@@ -246,39 +246,14 @@ async function runWorker(cfg) {
   const rows = [];
   const calibTrace = [];
   const errors = [];
-  let activeSeat = 0;
-  let activeRoom = null;
   let activeAssignment = ['normal', 'normal', 'normal', 'normal'];
   let errList = [];
-
-  /** 为每个房间注入「按座位读取难度」的 getter；决策前由队列项设置 activeSeat */
-  function injectSeatDifficulty(room, assignment) {
-    Object.defineProperty(room.settings, 'aiDifficulty', {
-      configurable: true,
-      enumerable: true,
-      get() {
-        return assignment[activeSeat] || 'normal';
-      },
-    });
-  }
-
-  function inferSeat(room) {
-    const g = room && room.game;
-    if (!g) return 0;
-    if (g.stage === 'draw') return g.turn;
-    if (g.stage === 'response' && g.pending) {
-      const r = g.pending.responders.find((x) => x.choice === null);
-      if (r) return r.seat;
-    }
-    return g.turn || 0;
-  }
 
   function drain(max = 200000) {
     let n = 0;
     while (queue.length) {
       const item = queue.shift();
       if (item.token.cancelled) continue;
-      activeSeat = item.seat === null || item.seat === undefined ? inferSeat(activeRoom) : item.seat;
       item.fn();
       if (++n > max) throw new Error('drain overflow：牌局未能收敛');
     }
@@ -383,7 +358,7 @@ async function runWorker(cfg) {
     send(ws, {
       type: 'create_room',
       settings: {
-        aiFill: true,
+        aiFill: false,
         totalRounds: cfg.roundsPerRoom,
         variant: cfg.variant,
         aiDifficulty: 'normal',
@@ -392,12 +367,18 @@ async function runWorker(cfg) {
     });
     const room = [...srv.rooms.values()][0];
     if (!room) throw new Error('建房失败');
-    injectSeatDifficulty(room, assignment);
     activeAssignment = assignment;
     // 房主也标记为 AI：4 个座位全部自动代打，且结算统计覆盖全部座位
     const owner = room.players.find((p) => p && !p.isAI);
     if (owner) owner.isAI = true;
-    activeRoom = room;
+    // 与线上一致：用 add_ai 消息按座位添加不同难度的人机（逐座位难度，不再覆写房间设置）
+    for (let s = 0; s < 4; s++) {
+      if (room.players[s]) continue;
+      send(ws, { type: 'add_ai', difficulty: assignment[s], seat: s });
+    }
+    if (room.players.filter(Boolean).length !== 4) throw new Error('按座位添加 AI 失败');
+    // 房主座位原本是真人，显式指定其托管代打难度
+    if (owner) owner.aiDifficulty = assignment[owner.seat];
     send(ws, { type: 'start_game' });
     const steps = drain();
     const got = rows.length;
@@ -405,7 +386,6 @@ async function runWorker(cfg) {
     const state = room.state;
     const stage = room.game && room.game.stage;
     srv.stop();
-    activeRoom = null;
     // 清掉本房间遗留队列（异常局可能留下未执行动作）
     queue.length = 0;
     return { steps, got, localErrs, state, stage };

@@ -41,7 +41,14 @@ const utilsMixin = {
   _logPlayers(room) {
     return (room.players || [])
       .filter(Boolean)
-      .map((pl) => ({ seat: pl.seat, name: pl.name, isAI: !!pl.isAI, score: pl.score || 0, roundScore: pl.roundScore || 0 }));
+      .map((pl) => ({
+        seat: pl.seat,
+        name: pl.name,
+        isAI: !!pl.isAI,
+        aiDifficulty: pl.aiDifficulty === 'hard' ? 'hard' : 'normal',
+        score: pl.score || 0,
+        roundScore: pl.roundScore || 0,
+      }));
   },
 
   /** 按查看者视角脱敏日志：私有日志（privateFor）仅本人见完整文本，他人见 maskedText */
