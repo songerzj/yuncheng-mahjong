@@ -91,6 +91,17 @@ test('ai-difficulty：normalize / parse / 座位覆盖 / 房间默认回落', ()
   assert.equal(aiDiff.difficultyOf(null, 0), 'normal');
 });
 
+test('ai-difficulty：机器人姓名前缀带难度，反复切换不叠加', () => {
+  assert.equal(aiDiff.label('hard'), '困难');
+  assert.equal(aiDiff.label('normal'), '普通');
+  assert.equal(aiDiff.label('bogus'), '普通');
+  assert.equal(aiDiff.aiName('机器人1', 'hard'), '困难·机器人1');
+  assert.equal(aiDiff.aiName('机器人2', 'normal'), '普通·机器人2');
+  assert.equal(aiDiff.aiName('困难·机器人1', 'normal'), '普通·机器人1', '切换难度时剥掉旧前缀');
+  assert.equal(aiDiff.aiName('普通·困难·机器人1', 'hard'), '困难·机器人1', '历史脏数据也不叠加前缀');
+  assert.equal(aiDiff.aiName('', 'hard'), '困难·机器人');
+});
+
 test('同一房间内 ai.chooseDiscard 按座位走不同策略', () => {
   const hand = FOUR_MELDS.concat(['b5', 'b9']);
   const g = mkGame(hand);
@@ -160,9 +171,15 @@ test('add_ai 支持难度与指定座位，可搭出混合难度房间', () => {
     assert.equal(room.players[2].aiDifficulty, 'normal');
     assert.equal(room.players[3].aiDifficulty, 'normal');
     assert.equal(room.players[0].isAI, false);
+    assert.deepEqual(
+      [1, 2, 3].map((s) => room.players[s].name),
+      ['困难·机器人1', '普通·机器人2', '普通·机器人3'],
+      '机器人姓名前缀跟随各自座位难度'
+    );
 
     const state = lastOf(wa, 'room_state');
     assert.deepEqual(state.room.players.map((p) => (p ? p.aiDifficulty : null)), ['normal', 'hard', 'normal', 'normal']);
+    assert.equal(state.room.players[1].name, '困难·机器人1', '房间视图下发带前缀的姓名');
 
     const wb = makeWs();
     srv.handleConnection(wb);
@@ -181,6 +198,7 @@ test('add_ai 默认难度跟随建房设置；非法难度 / 座位 / 已占座�
     const room = createRoom(srv, wa, { aiDifficulty: 'hard' });
     send(wa, { type: 'add_ai' });
     assert.equal(room.players[1].aiDifficulty, 'hard', '不带参数用房间默认困难');
+    assert.equal(room.players[1].name, '困难·机器人1', '自动补位的人机姓名也带默认难度');
 
     const count = room.players.filter(Boolean).length;
     send(wa, { type: 'add_ai', difficulty: 'impossible', seat: 2 });
@@ -198,31 +216,43 @@ test('add_ai 默认难度跟随建房设置；非法难度 / 座位 / 已占座�
   }
 });
 
-test('set_ai_difficulty：房主可切换、牌局中即时生效；越权 / 真人 / 非法值拒绝', () => {
+test('set_ai_difficulty：等待房/结算房可切换并同步姓名前缀；牌局进行中拒绝；越权 / 真人 / 非法值拒绝', () => {
   const srv = newServer();
   try {
     const wa = makeWs();
     srv.handleConnection(wa);
     const room = createRoom(srv, wa);
     send(wa, { type: 'add_ai', difficulty: 'normal', seat: 1 });
+    assert.equal(room.players[1].name, '普通·机器人1');
 
+    // 等待房：切换后姓名前缀同步更新并下发
     send(wa, { type: 'set_ai_difficulty', targetId: 's1', difficulty: 'hard' });
     assert.equal(room.players[1].aiDifficulty, 'hard');
+    assert.equal(room.players[1].name, '困难·机器人1');
     assert.equal(lastOf(wa, 'room_state').room.players[1].aiDifficulty, 'hard');
+    assert.equal(lastOf(wa, 'room_state').room.players[1].name, '困难·机器人1');
 
-    // 牌局进行中切换：同时刷新牌桌视图
+    // 结算后（未开局下一轮）仍可调整
+    room.state = 'settled';
+    send(wa, { type: 'set_ai_difficulty', seat: 1, difficulty: 'normal' });
+    assert.equal(room.players[1].aiDifficulty, 'normal');
+    assert.equal(room.players[1].name, '普通·机器人1', '反复切换不叠加前缀');
+
+    // 牌局进行中：直接拒绝，难度与姓名都不变，也不刷新牌桌视图
     room.state = 'playing';
     room.game = { hands: [[], [], [], []], melds: [[], [], [], []], discards: [[], [], [], []] };
     let gameBroadcasts = 0;
     const origBroadcast = srv._broadcastGameState;
     srv._broadcastGameState = () => { gameBroadcasts++; };
     try {
-      send(wa, { type: 'set_ai_difficulty', seat: 1, difficulty: 'normal' });
+      send(wa, { type: 'set_ai_difficulty', seat: 1, difficulty: 'hard' });
     } finally {
       srv._broadcastGameState = origBroadcast;
     }
-    assert.equal(room.players[1].aiDifficulty, 'normal');
-    assert.equal(gameBroadcasts, 1, '牌局中切换应刷新 game_state 徽标');
+    assert.equal(lastOf(wa, 'error').message, '牌局进行中，无法切换 AI 难度');
+    assert.equal(room.players[1].aiDifficulty, 'normal', '牌局中不得改动策略');
+    assert.equal(room.players[1].name, '普通·机器人1', '牌局中不得改动姓名');
+    assert.equal(gameBroadcasts, 0, '牌局中不应刷新 game_state');
     room.state = 'waiting';
 
     send(wa, { type: 'set_ai_difficulty', seat: 0, difficulty: 'hard' });
@@ -239,6 +269,7 @@ test('set_ai_difficulty：房主可切换、牌局中即时生效；越权 / 真
     send(wb, { type: 'set_ai_difficulty', seat: 1, difficulty: 'hard' });
     assert.equal(lastOf(wb, 'error').message, '只有房主可以调整 AI 难度');
     assert.equal(room.players[1].aiDifficulty, 'normal', '越权不得改动');
+    assert.equal(room.players[1].name, '普通·机器人1', '越权不得改动姓名');
   } finally {
     cleanupServer(srv);
   }
@@ -324,7 +355,7 @@ function waitingRoom() {
     settings: { variant: 'koudian', totalRounds: 4, aiFill: true, aiDifficulty: 'normal', roomType: 'public' },
     players: [
       { seat: 0, id: 'P1', name: '房主', isAI: false, connected: true, hosted: false, score: 0, roundScore: 0, aiDifficulty: 'normal' },
-      { seat: 1, id: 's1', name: '机器人1', isAI: true, connected: true, hosted: false, score: 0, roundScore: 0, aiDifficulty: 'hard' },
+      { seat: 1, id: 's1', name: '困难·机器人1', isAI: true, connected: true, hosted: false, score: 0, roundScore: 0, aiDifficulty: 'hard' },
       null, null,
     ],
   };
@@ -361,6 +392,7 @@ test('前端：空位可分别加普通/困难 AI，AI 座位难度按钮可切�
       addBtns.map((b) => `${b.dataset.addSeat}:${b.dataset.addDiff}`).sort(),
       ['2:hard', '2:normal', '3:hard', '3:normal']
     );
+    assert.match(doc.querySelector('#table-wrap').textContent, /困难·机器人1/, '等待房显示带难度前缀的姓名');
     const toggle = doc.querySelector('.ai-diff-toggle');
     assert.ok(toggle);
     assert.equal(toggle.dataset.diffSeat, '1');
@@ -399,12 +431,47 @@ test('前端：非房主看到难度徽标但没有可操作按钮', () => {
   }
 });
 
+test('前端：牌局进行中 AI 座位只显示难度徽标，不提供切换按钮', () => {
+  const dom = createFrontendEnv();
+  try {
+    const { window } = dom;
+    const doc = window.document;
+    const ws = window.__lastWs;
+    push(ws, { type: 'hello', playerId: 'P1', name: '房主' });
+    const room = waitingRoom();
+    room.state = 'playing';
+    room.roundNo = 1;
+    room.players[1].name = '困难·机器人1';
+    room.players[2] = { seat: 2, id: 's2', name: '普通·机器人2', isAI: true, connected: true, hosted: false, score: 0, roundScore: 0, aiDifficulty: 'normal' };
+    room.players[3] = { seat: 3, id: 's3', name: '普通·机器人3', isAI: true, connected: true, hosted: false, score: 0, roundScore: 0, aiDifficulty: 'normal' };
+    push(ws, { type: 'room_state', room });
+    const players = room.players.map((p) => Object.assign({}, p, {
+      hand: [], handCount: 0, discards: [], melds: [], isDealer: false, ting: false,
+    }));
+    push(ws, {
+      type: 'game_state',
+      game: {
+        stage: 'draw', roundNo: 1, yourSeat: 0, turn: 1, wallCount: 60,
+        players, winners: null, pending: null, goldTile: null, goldMother: null,
+        baoHuZone: false, logs: [],
+      },
+    });
+    assert.equal(doc.querySelectorAll('.ai-diff-toggle').length, 0, '牌桌不提供切换入口');
+    assert.equal(doc.querySelectorAll('.ai-diff-badge').length, 3, '三个人机座位仍显示只读徽标');
+    assert.match(doc.querySelector('#table-wrap').textContent, /困难·机器人1/);
+    assert.match(doc.querySelector('#table-wrap').textContent, /普通·机器人2/);
+  } finally {
+    dom.window.close();
+  }
+});
+
 test('前端：建房弹窗仍透传默认难度，并说明可逐座位覆盖', () => {
   const dom = createFrontendEnv();
   try {
     const { window } = dom;
     const doc = window.document;
     assert.match(doc.querySelector('.setting-note').textContent, /每个空座位/);
+    assert.match(doc.querySelector('.setting-note').textContent, /牌局进行中不可更改/);
     const seg = doc.querySelector('#seg-ai-difficulty');
     [...seg.querySelectorAll('.seg-item')][1].click();
     doc.querySelector('#create-confirm').click();

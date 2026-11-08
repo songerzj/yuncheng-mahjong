@@ -898,13 +898,15 @@ class GameServer {
   }
 
   /**
-   * 房主调整某个人机座位的难度（牌局进行中也允许，下一次决策即生效）。
-   * 真人座位不可设置：其托管/断线代打沿用房间默认难度。
+   * 房主调整某个人机座位的难度：仅等待房 / 结算后（未开局）可改，牌局进行中一律拒绝，
+   * 保证一局里每个座位的策略从头到尾一致。真人座位不可设置：其托管/断线代打沿用房间默认难度。
    */
   _setAIDifficulty(p, msg) {
     const room = p.roomId ? this.rooms.get(p.roomId) : null;
     if (!room) return this._err(p, '您不在房间中');
     if (p.id !== room.ownerId) return this._err(p, '只有房主可以调整 AI 难度');
+    // 与 add_ai / kick_player 同口径：只有 waiting / settled 允许改动座位配置
+    if (room.state !== 'waiting' && room.state !== 'settled') return this._err(p, '牌局进行中，无法切换 AI 难度');
     const difficulty = aiDifficulty.parse(msg && msg.difficulty);
     if (!difficulty) return this._err(p, 'AI 难度只能是 normal 或 hard');
     const reqSeat = msg && msg.seat;
@@ -913,12 +915,13 @@ class GameServer {
       : this._resolveRoomPlayer(room, String((msg && msg.targetId) || '').trim());
     if (!target) return this._err(p, '目标座位无人');
     if (!target.isAI) return this._err(p, '只能调整人机座位的难度');
-    if (target.aiDifficulty === difficulty) return;
+    const nextName = aiDifficulty.aiName(target.name, difficulty);
+    if (target.aiDifficulty === difficulty && target.name === nextName) return;
     target.aiDifficulty = difficulty;
-    this._log(room, `${target.name} 的 AI 难度已设为${difficulty === 'hard' ? '困难' : '普通'}`);
+    // 姓名前缀同步跟随难度，房间视图 / 牌桌 / 结算 / 日志都会读到同一个 name
+    target.name = nextName;
+    this._log(room, `${target.name} 的 AI 难度已设为${aiDifficulty.label(difficulty)}`);
     this._broadcastRoomState(room);
-    // 牌桌视图（game_state）里的座位徽标也要即时刷新，不等下一次行动
-    if (room.state === 'playing') this._broadcastGameState(room);
   }
 
   _kickPlayer(p, msg) {
@@ -995,7 +998,8 @@ class GameServer {
     const seq = room.nextAiNo++;
     const p = {
       id: `ai_${room.id}_${seq}`,
-      name: `机器人${seq}`,
+      // 姓名前缀带难度：房间列表、牌桌、结算、日志里都能一眼看出座位是普通还是困难人机
+      name: aiDifficulty.aiName(`机器人${seq}`, difficulty),
       isAI: true,
       aiDifficulty: difficulty,
       connected: true,
@@ -1010,7 +1014,7 @@ class GameServer {
     };
     room.players[seat] = p;
     this.players.set(p.id, p);
-    this._log(room, `${p.name} 加入房间（${difficulty === 'hard' ? '困难' : '普通'} AI）`);
+    this._log(room, `${p.name} 加入房间（${aiDifficulty.label(difficulty)} AI）`);
     return p;
   }
 

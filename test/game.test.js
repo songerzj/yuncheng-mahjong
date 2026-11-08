@@ -1543,6 +1543,13 @@ test('牌局进行中（playing）：仍禁止加入/踢人/补AI（仅 settled/
   const errAdd = lastOf(wa, 'error');
   assert.ok(errAdd && /已满|不能添加/.test(errAdd.message), '进行中不能补 AI');
 
+  // 进行中切换 AI 难度被拒（策略与姓名都不变）
+  const aiNameBefore = ai.name;
+  send(wa, { type: 'set_ai_difficulty', seat: ai.seat, difficulty: 'hard' });
+  const errDiff = lastOf(wa, 'error');
+  assert.ok(errDiff && /牌局进行中/.test(errDiff.message), '进行中不能切换 AI 难度');
+  assert.equal(ai.name, aiNameBefore);
+
   await sleep(300);
   cleanupServer(srv);
 });

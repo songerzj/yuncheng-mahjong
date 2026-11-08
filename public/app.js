@@ -604,7 +604,7 @@
     return `AI ${h ? '困难' : '普通'}×${ds.length}`;
   }
 
-  /** 座位上的难度徽标；房主可点击直接切换（牌局进行中也生效） */
+  /** 座位上的难度徽标；仅房主且牌局未开始时显示可点击切换按钮，牌局中只显示只读徽标 */
   function aiBadge(pl, interactive, seat) {
     if (!pl || !pl.isAI) return '';
     const isHard = pl.aiDifficulty === 'hard';
@@ -786,7 +786,7 @@
       if (pl) {
         html += `<div class="wait-card">
           <div class="nm">${esc(pl.name)}${pl.id === state.playerId ? '（我）' : ''}</div>
-          <div>${pl.isAI ? '🤖 AI' : '真人'}${pl.id === room.ownerId ? ' · 房主' : ''} ${aiBadge(pl, isOwner, s)}</div>`;
+          <div>${pl.isAI ? '🤖 AI' : '真人'}${pl.id === room.ownerId ? ' · 房主' : ''} ${aiBadge(pl, isOwner && room.state !== 'playing', s)}</div>`;
         if (isOwner && pl.id !== state.playerId) {
           html += `<button class="btn small kick-btn" data-kick="${pl.id}">踢出</button>`;
         }
@@ -806,7 +806,7 @@
     html += `<div class="wait-hint">${
       isOwner
         ? (full
-            ? '人员已齐，点击「开始游戏」开局；AI 座位上的难度按钮可随时切换。'
+            ? '人员已齐，点击「开始游戏」开局；开局前可在 AI 座位上切换难度，牌局进行中不可更改。'
             : '每个空位可分别加入普通或困难人机；开局时若开启 AI 补位，剩余空位按建房时的默认难度自动补齐。')
         : '等待房主开始游戏…'
     }</div>`;
@@ -856,7 +856,8 @@
         }
         if (pl && pl.isAI) {
           const next = pl.aiDifficulty === 'hard' ? 'normal' : 'hard';
-          btns.push(`<button class="btn small ai-diff-toggle" data-diff-seat="${pl.seat}" data-diff-next="${next}">${esc(pl.name)} · ${pl.aiDifficulty === 'hard' ? '困难' : '普通'} ⇄</button>`);
+          const nextLabel = next === 'hard' ? '困难' : '普通';
+          btns.push(`<button class="btn small ai-diff-toggle" data-diff-seat="${pl.seat}" data-diff-next="${next}" title="点击切换为${nextLabel} AI">${esc(pl.name)} ⇄ ${nextLabel}</button>`);
         }
       }
       btns.push(`<button class="btn small primary" id="btn-settle-restart">再来一轮</button>`);
@@ -1022,7 +1023,7 @@
       <div class="pc-top">
         ${p.isDealer ? '<span class="pc-dealer">庄</span>' : ''}
         ${p.isAI ? '<span class="pc-ai">AI</span>' : ''}
-        ${aiBadge(p, !!(state.room && state.room.ownerId === state.playerId), seat)}
+        ${aiBadge(p, !!(state.room && state.room.ownerId === state.playerId && state.room.state !== 'playing'), seat)}
         ${!self && !p.connected ? '<span class="pc-off">离线</span>' : ''}
         ${p.hosted ? `<span class="pc-host">${self ? 'AI托管中' : '托管'}</span>` : ''}
         ${p.ting ? '<span class="pc-ting">报听</span>' : ''}

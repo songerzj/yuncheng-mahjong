@@ -40,4 +40,22 @@ function isHard(room, seat) {
   return difficultyOf(room, seat) === 'hard';
 }
 
-module.exports = { VALUES, normalize, parse, difficultyOf, isHard };
+/** 难度中文标签：UI 徽标与机器人姓名共用，避免两处文案漂移 */
+function label(difficulty) {
+  return normalize(difficulty) === 'hard' ? '困难' : '普通';
+}
+
+// 生成新名字时剥掉可能已存在的旧难度前缀，保证反复切换不会叠成「普通·困难·机器人1」
+const AI_NAME_PREFIX_RE = /^(?:(?:普通|困难)·)+/;
+
+/**
+ * 机器人显示名：难度始终放在姓名最前面，如「困难·机器人1」。
+ * @param {string} baseName 基础姓名（新建时传 `机器人${seq}`），也可直接传旧显示名
+ * @param {'normal'|'hard'} difficulty
+ */
+function aiName(baseName, difficulty) {
+  const base = String(baseName || '机器人').replace(AI_NAME_PREFIX_RE, '');
+  return `${label(difficulty)}·${base || '机器人'}`;
+}
+
+module.exports = { VALUES, normalize, parse, difficultyOf, isHard, label, aiName };
