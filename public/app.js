@@ -598,7 +598,7 @@
           <span>${r.playerCount}/4 人</span>
           <span>创建者 ${esc(r.ownerName || '未知')}</span>
           <span>${hz ? '112张·红中麻将' : tj ? '136张·贴金麻将' : '136张·带风带箭'}</span>
-          <span>${r.settings.aiFill ? 'AI补位' : '无AI'}</span>
+          <span>${r.settings.aiFill ? (r.settings.aiDifficulty === 'hard' ? 'AI补位·困难' : 'AI补位·普通') : '无AI'}</span>
           <span>${hz ? '癞子红中' : tj ? '金牌万能' : '报听必开'}</span>
           <span>${roundsText(r.settings.totalRounds)}</span>
         </div>
@@ -644,7 +644,8 @@
       `${roomTypeName} · ${variantLabel(room.settings)} · ${roomStateText(room.state)}` +
       (room.roundNo ? ` · 第 ${room.roundNo} 局` : '') +
       (room.settleConfirms && !room.settleConfirms.every(Boolean) ? ' · 等待确认' : '') +
-      ` · ${roundsText(room.settings.totalRounds)}`;
+      ` · ${roundsText(room.settings.totalRounds)}` +
+      (room.settings.aiFill ? ` · AI ${room.settings.aiDifficulty === 'hard' ? '困难' : '普通'}` : ' · 无AI');
     renderHeaderBtns();
     if (room.state === 'playing' && state.game) {
       renderTable();
@@ -2344,6 +2345,8 @@
     });
     buildSeg('seg-rounds', [4, 8, 12, 0], (v) => (v === 0 ? '不限' : v + ' 局'));
     buildSeg('seg-roomtype', ['public', 'friend'], (v) => (v === 'public' ? '公共局（大厅可见）' : '好友局（仅受邀）'));
+    // 默认普通（原有启发式）；困难按向听数/进张数枚举选牌，并规避点炮
+    buildSeg('seg-ai-difficulty', ['normal', 'hard'], (v) => (v === 'hard' ? '困难（牌效计算）' : '普通'));
     buildSeg('seg-score-model', ['multiply', 'add'], (v) => (v === 'add' ? '加分（固定加番）' : '乘算（倍数）'), applyScoreModelPanel);
     applyScoreModelPanel();
     buildSeg('seg-dealer-flow', ['next', 'keep'], (v) => (v === 'keep' ? '连庄' : '下家接庄'));
@@ -2358,7 +2361,7 @@
       const totalRounds = segValue('seg-rounds');
       const aiFill = $('#opt-aifill').checked;
       const roomType = segValue('seg-roomtype') === 'public' ? 'public' : 'friend';
-      const base = { totalRounds, aiFill, roomType };
+      const base = { totalRounds, aiFill, roomType, aiDifficulty: segValue('seg-ai-difficulty') || 'normal' };
       if (variant === 'hongzhong') {
         send({ type: 'create_room', settings: {
           ...base,

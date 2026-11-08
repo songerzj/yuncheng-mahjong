@@ -2,10 +2,19 @@
 
 /**
  * AI 决策模块（机器人 / 断线托管代打）
- * 简单可靠策略：能胡就胡、能杠就杠、按安全度与保留价值出牌。
+ *
+ * 难度：room.settings.aiDifficulty = 'normal'（默认，原有启发式）| 'hard'（向听/进张枚举）。
+ * 普通模式行为完全保持原样；困难模式仅替换出牌选择（胡/杠/报听/响应流程共用），
+ * 决策内核见 ./ai-hard.js 与 ./shanten.js。
  */
 
 const rules = require('./rules');
+const hard = require('./ai-hard');
+
+/** 难度归一化：仅 'hard' 进入困难模式，其余（含旧房间数据）一律普通 */
+function isHard(room) {
+  return !!(room && room.settings && room.settings.aiDifficulty === 'hard');
+}
 
 /**
  * 回合摸牌后的决策
@@ -110,9 +119,22 @@ function decideResponse(game, room, seat, prompt) {
 }
 
 /**
- * 出牌选择：安全度优先（别人打过的牌），其次保留价值低（孤张/边张）的牌
+ * 出牌选择（难度分派）：困难走向听/进张枚举，普通走原有启发式。
+ * 困难策略无法给出有效解时回退普通策略，保证 AI 任何局面都能出牌。
  */
 function chooseDiscard(hand, game, room, seat) {
+  if (isHard(room)) {
+    const picked = hard.chooseDiscard(hand, game, seat);
+    if (picked) return picked;
+  }
+  return chooseDiscardNormal(hand, game, room, seat);
+}
+
+/**
+ * 普通难度出牌：安全度优先（别人打过的牌），其次保留价值低（孤张/边张）的牌。
+ * 这段是原实现，未作任何改动，保证默认难度行为与历史完全一致。
+ */
+function chooseDiscardNormal(hand, game, room, seat) {
   const safe = new Set();
   for (const d of game.discards) {
     for (const t of d) safe.add(t);
@@ -159,4 +181,9 @@ module.exports = {
   decideDrawAction,
   decideResponse,
   chooseDiscard,
+  chooseDiscardNormal,
+  isHard,
+  // 红中/贴金专用 AI 在 GameServer 内，困难模式由此接入同一套牌效思维
+  hardChooseHongZhongDiscard: hard.chooseHongZhongDiscard,
+  hardChooseTieJinDiscard: hard.chooseTieJinDiscard,
 };

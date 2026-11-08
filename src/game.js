@@ -3188,6 +3188,8 @@ class GameServer {
     const variant = s.variant === 'hongzhong' ? 'hongzhong' : (s.variant === 'tiejin' ? 'tiejin' : 'koudian');
     // 房间类型：public=公共局（大厅列表可见，任何人可加入）；friend=好友局（大厅列表不可见，仅受邀进入）。默认 public 保持向后兼容
     const roomType = s.roomType === 'friend' ? 'friend' : 'public';
+    // AI 难度：normal=原有启发式（默认，旧客户端/旧房间数据兼容）；hard=向听/进张枚举 + 精确风险
+    const aiDifficulty = s.aiDifficulty === 'hard' ? 'hard' : 'normal';
     // 红中麻将专属设置：扎码张数（0=不扎码 / 1/2/4/6）。
     // 固定胡牌方式：只能自摸/抢杠胡（禁点炮、抢杠仅限补杠）。
     if (variant === 'hongzhong') {
@@ -3198,6 +3200,7 @@ class GameServer {
         aiFill: !!s.aiFill,
         variant,
         roomType,
+        aiDifficulty,
         zhaMa,
         dealerFlow: 'keep', // 红中：流局庄家连庄（设计固定）
       };
@@ -3209,6 +3212,7 @@ class GameServer {
         aiFill: !!s.aiFill,
         variant,
         roomType,
+        aiDifficulty,
         drawEndMode: s.drawEndMode === 'B' ? 'B' : 'A', // 流局开关：默认 A（摸完）
         scoreMode: s.scoreMode === 'B' ? 'B' : 'A', // 计分开关：默认 A（边趣版）
         dealerFlow: 'flow', // 贴金：轮庄/流局坐庄（有杠下家、无杠连庄）
@@ -3223,6 +3227,7 @@ class GameServer {
       aiFill: !!s.aiFill,
       variant,
       roomType,
+      aiDifficulty,
       allowTing: true, // 报听为 136 必选核心规则
       enableQingYiSe: !!s.enableQingYiSe,
       enableYiTiaoLong: !!s.enableYiTiaoLong,
@@ -3444,6 +3449,11 @@ class GameServer {
   }
 
   _chooseHongZhongDiscard(g, room, seat) {
+    // 困难难度：先走「枚举弃牌 → 听口进张 → 风险 → 连接度」，无有效听口时回退下方原启发式
+    if (ai.isHard(room)) {
+      const picked = ai.hardChooseHongZhongDiscard(g, seat);
+      if (picked) return picked;
+    }
     const cnt = rules.countTiles(g.hands[seat]);
     const candidates = [];
     for (const [t, c] of cnt) {
@@ -3693,6 +3703,11 @@ class GameServer {
   }
 
   _chooseTieJinDiscard(g, room, seat) {
+    // 困难难度：贴金牌型专用听口枚举（金牌万能不参与弃牌），无有效听口时回退原启发式
+    if (ai.isHard(room)) {
+      const picked = ai.hardChooseTieJinDiscard(g, seat);
+      if (picked) return picked;
+    }
     const cnt = rules.countTiles(g.hands[seat]);
     const candidates = [];
     for (const [t, c] of cnt) {
